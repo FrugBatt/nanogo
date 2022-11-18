@@ -1,0 +1,12 @@
+
+all:
+	ocamlopt -c lib.ml
+	ocamlopt -c x86_64.mli
+	ocamlopt -c x86_64.ml
+	ocamlopt -c lib.ml
+	ocamlopt -c ast.mli
+	ocamllex lexer.mll
+	menhir --ocamlopt "ocamlopt -c" --infer-read-reply parser.mli parser.mly
+	ocamlopt -c parser.mli
+	ocamlopt -c parser.ml
+	ocamlopt -c lexer.ml
