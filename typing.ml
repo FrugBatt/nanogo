@@ -96,6 +96,7 @@ module Env = struct
   let empty = M.empty
   let find = M.find
   let add env v = Printf.printf "adding %s\n" v.v_name; M.add v.v_name v env
+  let exists env s = M.mem s env
 
   let all_vars = ref []
   let check_unused () =
@@ -228,13 +229,15 @@ and expr_desc env loc = function
     let typl = List.map (fun e -> e.expr_typ) tel in
     if List.length typl = 1 then TEreturn tel, List.hd typl, true
     else TEreturn tel, Tmany typl, true
-  | PEblock el -> (match el with
-      | [] -> TEblock [], tvoid, false
-      | h::t -> let te, rt = expr env h in
-        let teaux, typ, rtaux = expr_desc env h.pexpr_loc (PEblock t) in
-          (match teaux with
-            | TEblock tel -> TEblock (te::tel), tvoid, rt || rtaux
-            | _ -> error loc "undefined expression."))
+  | PEblock el ->
+      let tel = block_eval env loc el in TEblock tel, tvoid, false
+      (* (match el with *)
+      (* | [] -> TEblock [], tvoid, false *)
+      (* | h::t -> let te, rt = expr env h in *)
+      (*   let teaux, typ, rtaux = expr_desc env h.pexpr_loc (PEblock t) in *)
+      (*     (match teaux with *)
+      (*       | TEblock tel -> TEblock (te::tel), tvoid, rt || rtaux *)
+      (*       | _ -> error loc "undefined expression.")) *)
     (* let rec f e = function
       | [] -> []
       | h::t -> (expr e h)::(f e t)
@@ -272,6 +275,95 @@ and l_expr_desc env loc = function
         te.expr_desc, te.expr_typ, false
   | _ -> error loc "expression is not a l-value"
 
+and block_eval env loc = function
+  | [] -> []
+  | {pexpr_desc= PEvars (il, Some t, []); pexpr_loc= _}::l ->
+    
+    let tt = type_type t in
+    let varl = ref [] in
+    let up_env = List.fold_left (fun e id -> let nenv,v = Env.var id.id id.loc tt e in varl := v::!varl; nenv) env il in
+    let telaux = block_eval up_env loc l in
+    {expr_desc= TEvars (List.rev !varl, []); expr_typ= tvoid}::telaux
+
+  | {pexpr_desc= PEvars (il, Some t, el); pexpr_loc= _}::l ->
+
+    if (List.length il <> List.length el) && (List.length el <> 1) then error loc "var exp1"
+
+    else if List.length il = List.length el then
+      (let vexpl = List.map (fun (id,e) ->
+        if Env.exists env id.id then error loc ("the variable " ^ id.id ^ " already exists")
+        else let te, rt = expr env e and tt = type_type t in
+          if te.expr_typ <> tt then error loc ("the variable has a type " ^ (type_to_string te.expr_typ) ^ " but is expected to have type " ^ (type_to_string tt))
+          else (id, te)) (List.combine il el) in
+      let varl = ref [] in
+      let _,tel = List.split vexpl in
+      let up_env = List.fold_left (fun e (id, te) -> let nenv,v = (Env.var id.id id.loc te.expr_typ e) in varl := v::!varl; nenv) env vexpl in
+      let telaux = block_eval up_env loc l in
+      {expr_desc= TEvars (List.rev !varl, tel); expr_typ= tvoid}::telaux)
+
+    else
+      (let tef,tyl = match List.hd el with
+        | {pexpr_desc= PEcall (idf, elf) as pef; pexpr_loc= loc} as ef ->
+
+            let tef,rt = expr env ef in
+        (match tef.expr_typ with
+          | Tmany tyl ->
+            if List.length l <> List.length il then error loc "the function return not enough values"
+            else tef,tyl
+          | _ -> error loc "this function return not enough values")
+
+        | _ -> error loc "this expression need to be a function call"
+      in
+
+       let vexpl = List.map (fun (id,ty) ->
+        if Env.exists env id.id then error loc ("the variable " ^ id.id ^ " already exists")
+        else if (type_type t) <> ty then error loc ("this expression have a type " ^ (type_to_string ty) ^ " but is expected to have type " ^ (type_to_string (type_type t)))
+        else (id, ty)) (List.combine il tyl)
+      in
+        let varl = ref [] in
+        let up_env = List.fold_left (fun e (id, ty) -> let nenv,v = (Env.var id.id id.loc ty e) in varl := v::!varl; nenv) env vexpl in
+        let telaux = block_eval up_env loc l in
+        {expr_desc= TEvars (List.rev !varl, [tef]); expr_typ= tvoid}::telaux)
+  | {pexpr_desc= PEvars (il, None, el); pexpr_loc= _}::l ->
+    if (List.length il <> List.length el) && (List.length el <> 1) then error loc "var exp"
+
+    else if List.length il = List.length el then
+      (let vexpl = List.map (fun (id,e) ->
+        if Env.exists env id.id then error loc ("the variable " ^ id.id ^ " already exists")
+        else let te, rt = expr env e in (id, te)) (List.combine il el) in
+      let varl = ref [] in
+      let _,tel = List.split vexpl in
+      let up_env = List.fold_left (fun e (id, te) -> let nenv,v = (Env.var id.id id.loc te.expr_typ e) in varl := v::!varl; nenv) env vexpl in
+      let telaux = block_eval up_env loc l in
+      {expr_desc= TEvars (List.rev !varl, tel); expr_typ= tvoid}::telaux)
+
+    else 
+      (let tef,tyl = match List.hd el with
+      | {pexpr_desc= PEcall (idf, elf) as pef; pexpr_loc= loc} as ef ->
+
+        let tef,rt = expr env ef in
+        (match tef.expr_typ with
+          | Tmany tyl ->
+            if List.length l <> List.length il then error loc "the function return not enough values"
+            else tef,tyl
+          | _ -> error loc "this function return not enough values")
+
+        | _ -> error loc "this expression need to be a function call"
+      in
+
+       let vexpl = List.map (fun (id,ty) ->
+        if Env.exists env id.id then error loc ("the variable " ^ id.id ^ " already exists")
+        else (id, ty)) (List.combine il tyl) in
+
+      let varl = ref [] in
+      let up_env = List.fold_left (fun e (id, ty) -> let nenv,v = (Env.var id.id id.loc ty e) in varl := v::!varl; nenv) env vexpl in
+      let telaux = block_eval up_env loc l in
+      {expr_desc= TEvars (List.rev !varl, [tef]); expr_typ= tvoid}::telaux)
+  | {pexpr_desc= PEvars _; pexpr_loc= _}::l -> error loc "this var expression isn't correct"
+  | e::l ->
+      let te,rt = expr env e in
+      let telaux = block_eval env loc l in
+      te::telaux
 
 let found_main = ref false
 
