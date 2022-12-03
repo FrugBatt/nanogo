@@ -32,32 +32,28 @@ let error_typ loc t1 t2 = error_typed loc t1 t2 "this"
 
 (* TODO environnement pour les types structure *)
 module Struct_Env = struct
-  module M = Map.Make(String)
-  type t = var M.t
-  let struct_env = ref M.empty
+  let struct_env = Hashtbl.create 5
 
-  let find s = M.find s !struct_env
-  let add s = struct_env := M.add s.s_name s !struct_env
-  let exists s = M.mem s !struct_env
+  let find s_name = Hashtbl.find struct_env s_name
+  let add s = Hashtbl.add struct_env s.s_name s
+  let exists s_name = Hashtbl.mem struct_env s_name
 
   let struc x fields size =
     let s = {s_name= x; s_fields= fields; s_size= size} in
-    add s, s
+      add s, s
   let void_struct x = struc x (Hashtbl.create 0) 0
 end
 
 (* TODO environnement pour les fonctions *)
 module Fun_Env = struct
-  module M = Map.Make(String)
-  type t = var M.t
-  let func_env = ref M.empty
+  let func_env = Hashtbl.create 5
 
-  let find s = M.find s !func_env
-  let add_f f = func_env := M.add f.fn_name f !func_env
+  let find fn_name = Hashtbl.find func_env fn_name
+  let add f = Hashtbl.add func_env f.fn_name f
 
   let func x params typ =
     let f = {fn_name= x; fn_params= params; fn_typ= typ} in
-    add_f f, f
+    add f, f
 end
 
 let rec type_type = function
