@@ -124,7 +124,7 @@ module Env = struct
   let all_vars = ref []
   let check_unused () =
     let check v =
-      if v.v_name <> "_" && (* TODO used *) false then error v.v_loc "unused variable" in
+      if v.v_name <> "_" && not v.v_used then error v.v_loc ("unused variable " ^ v.v_name) in
     List.iter check !all_vars
 
 
@@ -289,6 +289,7 @@ and l_expr env e =
 and l_expr_desc env loc = function
   | PEident id ->
     (try let v = Env.find id.id env in
+      v.v_used <- true;
       TEident v, v.v_typ, false
     with Not_found -> error loc ("unbound variable " ^ id.id))
 
