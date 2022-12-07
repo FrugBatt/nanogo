@@ -50,6 +50,7 @@ module Fun_Env = struct
 
   let find fn_name = Hashtbl.find func_env fn_name
   let add f = Hashtbl.add func_env f.fn_name f
+  let exists fn_name = Hashtbl.mem func_env fn_name
 
   let func x params typ =
     let f = {fn_name= x; fn_params= params; fn_typ= typ} in
@@ -64,6 +65,15 @@ let rec type_type = function
   | PTident i ->
       let s = Struct_Env.find i.id in
         Tstruct s
+
+let rec valid_type loc = function
+  | PTident { id = "int" } -> ()
+  | PTident { id = "bool" } -> ()
+  | PTident { id = "string" } -> ()
+  | PTptr ty -> valid_type loc ty
+  | PTident i ->
+      if Struct_Env.exists i.id then ()
+      else error loc ("struct " ^ i.id ^ " is undefined")
 
 let rec eq_type ty1 ty2 = match ty1, ty2 with
   | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
@@ -108,7 +118,7 @@ let fmt_imported = ref false
 let evar v = { expr_desc = TEident v; expr_typ = v.v_typ }
 
 let new_var =
-  let id = ref 0 in
+  let id = ref (-1) in
   fun x loc ?(used=false) ty ->
     incr id;
     { v_name = x; v_id = !id; v_loc = loc; v_typ = ty; v_used = used; v_addr = 0; v_depth = 0 }
@@ -116,7 +126,7 @@ let new_var =
 module Env = struct
   module M = Map.Make(String)
   type t = var M.t
-  let empty = M.empty
+
   let find = M.find
   let add env v = M.add v.v_name v env
   let exists env s = M.mem s env
@@ -132,6 +142,10 @@ module Env = struct
     let v = new_var x loc ?used ty in
     all_vars := v :: !all_vars;
     add env v, v
+
+  let empty = 
+    let map = M.empty in
+    fst (var "_" dummy_loc ~used:true Twild map)
 
   (* TODO type () et vecteur de types *)
 end
@@ -259,7 +273,7 @@ and expr_desc env loc = function
     let nlvl = List.length lvl and nel = params_length tel in
     if nlvl <> nel then error loc "arity doesn't match to assign each variable"
     else
-      let tlvl = List.map (fun e -> fst (l_expr env e)) lvl in
+      let tlvl = List.map (fun e -> fst (l_expr env ~underscore:true e)) lvl in
       let tyl = list_of_typ (List.map (fun e -> e.expr_typ) tel) in
       List.iter (fun (e1, ty) -> if e1.expr_typ <> ty then error loc ("the variable " ^ (expr_id e1) ^ " has a type " ^ (type_to_string e1.expr_typ) ^ " but is expected to have type " ^ (type_to_string ty))) (List.combine tlvl tyl);
         TEassign (tlvl,tel), tvoid, false
@@ -282,16 +296,18 @@ and expr_desc env loc = function
   | PEvars (il, tl, pel) -> (* Si on déclare une variable pas dans un bloc, ce n'est pas défini par les règles de typage : erreur *)
     error loc "variable need to be declared in a block"
 
-and l_expr env e =
-  let e, ty, rt = l_expr_desc env e.pexpr_loc e.pexpr_desc in
+and l_expr env ?underscore e =
+  let e, ty, rt = l_expr_desc env ?underscore e.pexpr_loc e.pexpr_desc in
   { expr_desc = e; expr_typ = ty}, rt
 
-and l_expr_desc env loc = function
+and l_expr_desc env ?(underscore=false) loc = function
   | PEident id ->
-    (try let v = Env.find id.id env in
-      v.v_used <- true;
-      TEident v, v.v_typ, false
-    with Not_found -> error loc ("unbound variable " ^ id.id))
+    if id.id = "_" && not underscore then error loc ("variable _ can be used only in an assign expression")
+    else
+      (try let v = Env.find id.id env in
+        v.v_used <- true;
+        TEident v, v.v_typ, false
+      with Not_found -> error loc ("unbound variable " ^ id.id))
 
   | PEdot (e,id) as expd ->
     let _ = l_expr env e in
@@ -356,7 +372,9 @@ let found_main = ref false
 
 (* 1. declare structures *)
 let phase1 = function
-  | PDstruct { ps_name = { id = id; loc = loc }} -> ignore (Struct_Env.void_struct id)
+  | PDstruct { ps_name = { id = id; loc = loc }} ->
+    if Struct_Env.exists id then error loc ("struct " ^ id ^ " already defined")
+    else ignore (Struct_Env.void_struct id)
   | PDfunction _ -> ()
 
 let rec sizeof = function
@@ -367,16 +385,37 @@ let rec sizeof = function
 
 (* 2. declare functions and type fields *)
 let var_of_pparam (id, typ) = new_var id.id id.loc (type_type typ)
+let rec unicity l =
+  let rec aux uni = function
+    | [] -> true
+    | h::t ->
+      if List.mem h uni then false
+      else aux (h::uni) t
+  in aux [] l
 
 let phase2 = function
   | PDfunction { pf_name={id; loc}; pf_params=pl; pf_typ=tyl; } ->
       if (id = "main" && pl = []) then found_main := true;
-      ignore (Fun_Env.func id (List.map var_of_pparam pl) (List.map type_type tyl))
-  | PDstruct { ps_name = {id}; ps_fields = fl } ->
+      if Fun_Env.exists id then error loc ("function " ^ id ^ " already defined")
+      else
+        List.iter (valid_type loc) tyl; (* Vérification des types de retour *)
+        List.iter (fun (_,pty) -> valid_type loc pty) pl; (* Vérification des types des arguments *)
+        let varl = List.map var_of_pparam pl in
+        let varlnames = List.map (fun v -> v.v_name) varl in
+        if unicity varlnames then
+          ignore (Fun_Env.func id varl (List.map type_type tyl))
+        else
+          error loc ("function " ^ id ^ " args are not distincts")
+  | PDstruct { ps_name = {id= id; loc= loc}; ps_fields = fl } ->
       let ht = Hashtbl.create (List.length fl) in
-        List.iter (fun (fid, ftyp) -> let f = {f_name= fid.id; f_typ= type_type ftyp; f_ofs= 0} in Hashtbl.add ht fid.id f) fl; 
-      let size = Hashtbl.fold (fun _ f i -> i + (sizeof f.f_typ)) ht 0 in
-        ignore (Struct_Env.struc id ht size)
+      let fnames = ref [] in
+        List.iter (fun (fid, ftyp) -> 
+          valid_type fid.loc ftyp;
+          if List.mem fid.id !fnames then error fid.loc ("field " ^ fid.id ^ " already defined");
+          fnames := fid.id :: !fnames;
+          let f = {f_name= fid.id; f_typ= type_type ftyp; f_ofs= 0} in Hashtbl.add ht fid.id f) fl; 
+        let size = Hashtbl.fold (fun _ f i -> i + (sizeof f.f_typ)) ht 0 in
+          ignore (Struct_Env.struc id ht size)
 
 (* 3. type check function bodies *)
 let decl = function
