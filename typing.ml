@@ -153,6 +153,11 @@ module Env = struct
       else create ()
     else create ()
 
+  let var_depth x loc ?used ty depth env =
+    let v = new_var x loc ?used ty depth in
+      all_vars := v :: !all_vars;
+      add env v,v
+
   let empty = 
     let e = {map= M.empty; depth= 0} in
     fst (var "_" dummy_loc ~used:true Twild e)
@@ -242,11 +247,12 @@ and expr_desc env loc = function
       error loc "new expects a type"
 
   | PEcall (id, el) ->
+    if not (Fun_Env.exists id.id) then error loc ("the function " ^ id.id ^ " is not defined");
     let f = Fun_Env.find id.id in
     let tel,_ = List.split (List.map (fun x -> expr env x) el) in
-    let tyel = List.map (fun te -> te.expr_typ) tel in
+    let tyel = list_of_typ (List.map (fun te -> te.expr_typ) tel) in
     let tyvl = List.map (fun v -> v.v_typ) f.fn_params in
-      if (List.length f.fn_params) <> (params_length tel) then error loc "function arity doesn't match"
+      if (List.length f.fn_params) <> (params_length tel) || ((List.length f.fn_params = 0) && (List.length el <> 0))then error loc "function arity doesn't match"
       else begin
         List.iter (fun (tyv,tye) -> if not (eq_type tyv tye) then error loc ("this function is called with type " ^ (type_to_string (typ_of_list tyel)) ^ " but is expected to have type " ^ (type_to_string (typ_of_list tyvl)))) (List.combine tyvl tyel);
         TEcall (f,tel), typ_of_list f.fn_typ, false
@@ -329,10 +335,13 @@ and l_expr_desc env ?(underscore=false) loc = function
     let te,_ = expr env {pexpr_loc= loc; pexpr_desc= expd} in
       te.expr_desc, te.expr_typ, false
 
-  | PEunop (Ustar, e) as expd ->
+  | PEunop (Ustar, e) ->
       if e.pexpr_desc = PEnil then error loc "*nil is undefined"
-      else let te,_ = expr env {pexpr_loc= loc; pexpr_desc= expd} in
-        te.expr_desc, te.expr_typ, false
+      else (let te,_ = expr env e in
+        match te.expr_typ with
+          | Tptr ty -> TEunop (Ustar, te), ty, false
+          | ty -> error loc ("this expression have a type " ^ (type_to_string ty) ^ " but is expected to have type *type")
+        )
 
   | _ -> error loc "this expression is not a l-value"
 
@@ -348,8 +357,8 @@ and block_eval env = function
       (* Printf.printf "1. %d, 2. %d, 3. %d\n" (nexp) (List.length tel) (List.length tyl); *)
       let varl = ref [] in
       let up_env = List.fold_left (fun e (id, ty) ->
-        if id.id = "_" then error loc "can't declare _"
-        else let nenv,v = Env.var id.id id.loc ty e in varl := v::!varl; nenv) env (List.combine il tyl)
+        if id.id = "_" then (varl := (Env.find "_" e)::!varl; e)
+        else (let nenv,v = Env.var id.id id.loc ty e in varl := v::!varl; nenv)) env (List.combine il tyl)
       in
       let telaux,rtaux = block_eval up_env l in
         {expr_desc= TEvars (List.rev !varl, tel); expr_typ= tvoid}::telaux, rtaux
@@ -374,7 +383,7 @@ and block_eval env = function
       (* Printf.printf "1. %d, 2. %d, 3. %d\n" (nexp) (List.length tel) (List.length tyl); *)
       let varl = ref [] in
       let up_env = List.fold_left (fun e (id,vtyp) ->
-        if id.id = "_" then error loc "can't declare _"
+        if id.id = "_" then (varl := (Env.find "_" e)::!varl; e)
         else if eq_type ty vtyp then begin
           let nenv, v = Env.var id.id id.loc ty e in
             varl := v::!varl;
@@ -391,6 +400,30 @@ and block_eval env = function
 
 
 let found_main = ref false
+let struct_ref_tbl = Hashtbl.create 5
+
+let rec struct_ref = function
+  | PTident { id = "int" } -> false
+  | PTident { id = "bool" } -> false
+  | PTident { id = "string" } -> false
+  | PTptr ty -> struct_ref ty
+  | PTident i -> true
+
+let struct_name = function
+  | Tint | Tbool | Tstring | Twild | Tmany _ | Tptr _ -> ""
+  | Tstruct s -> s.s_name
+
+let check_recursive_typ ty loc =
+  let mem = ref [] in
+  let rec aux = function
+  | Tint | Tbool | Tstring | Tptr _ | Twild -> ()
+  | Tmany l -> List.iter aux l
+  | Tstruct s as ty ->
+      mem := (s.s_name)::!mem;
+      Hashtbl.iter (fun _ v ->
+        if List.mem (struct_name v.f_typ) !mem then error loc ("recursive struct definition in " ^ (type_to_string ty))
+        else aux v.f_typ) s.s_fields
+  in aux ty
 
 (* 1. declare structures *)
 let phase1 = function
@@ -406,7 +439,7 @@ let rec sizeof = function
   | Tstruct s -> s.s_size
 
 (* 2. declare functions and type fields *)
-let var_of_pparam (id, typ) = new_var id.id id.loc (type_type typ) 0
+let var_of_pparam (id, typ) = new_var id.id id.loc (type_type typ) max_int
 let rec unicity l =
   let rec aux uni = function
     | [] -> true
@@ -417,7 +450,7 @@ let rec unicity l =
 
 let phase2 = function
   | PDfunction { pf_name={id; loc}; pf_params=pl; pf_typ=tyl; } ->
-      if (id = "main" && pl = []) then found_main := true;
+      if (id = "main" && pl = [] && tyl = []) then found_main := true;
       if Fun_Env.exists id then error loc ("function " ^ id ^ " already defined")
       else
         List.iter (valid_type loc) tyl; (* Vérification des types de retour *)
@@ -433,11 +466,18 @@ let phase2 = function
       let fnames = ref [] in
         List.iter (fun (fid, ftyp) -> 
           valid_type fid.loc ftyp;
-          if List.mem fid.id !fnames then error fid.loc ("field " ^ fid.id ^ " already defined");
-          fnames := fid.id :: !fnames;
-          let f = {f_name= fid.id; f_typ= type_type ftyp; f_ofs= 0} in Hashtbl.add ht fid.id f) fl; 
+          if List.mem fid.id !fnames then error fid.loc ("field " ^ fid.id ^ " already defined")
+          else if struct_ref ftyp then Hashtbl.add struct_ref_tbl id (fid.id, ftyp)
+          else
+          (fnames := fid.id :: !fnames;
+          let f = {f_name= fid.id; f_typ= type_type ftyp; f_ofs= 0} in Hashtbl.add ht fid.id f)) fl; 
         let size = Hashtbl.fold (fun _ f i -> i + (sizeof f.f_typ)) ht 0 in
           ignore (Struct_Env.struc id ht size)
+
+let phase2etdemi id (fid, ftyp) =
+  let s = Struct_Env.find id in
+  Hashtbl.add s.s_fields fid {f_name= fid; f_typ= type_type ftyp; f_ofs= 0};
+   s.s_size <- s.s_size + (sizeof (type_type ftyp))
 
 (* 3. type check function bodies *)
 let decl = function
@@ -448,17 +488,20 @@ let decl = function
       let e, rt = expr env e in
         if !return_typ <> tvoid && not rt then error loc ("the function " ^ f.fn_name ^ " have not a return expression in every case")
         else TDfunction (f, e)
-  | PDstruct {ps_name={id}} ->
+  | PDstruct {ps_name={id; loc}} ->
     let s = Struct_Env.find id in
-     TDstruct s
+      check_recursive_typ (Tstruct s) loc;
+      TDstruct s
 
 let file ~debug:b (imp, dl) =
   debug := b;
   (* fmt_imported := imp; *)
   List.iter phase1 dl;
   List.iter phase2 dl;
+  Hashtbl.iter phase2etdemi struct_ref_tbl;
   if not !found_main then error dummy_loc "missing method main";
   let dl = List.map decl dl in
   Env.check_unused (); (* TODO variables non utilisees *)
   if imp && not !fmt_used then error dummy_loc "fmt imported but not used";
+  if not imp && !fmt_used then error dummy_loc "fmt used but not imported";
   dl
