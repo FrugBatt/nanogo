@@ -57,14 +57,16 @@ module Fun_Env = struct
     add f, f
 end
 
-let rec type_type = function
+let rec type_type ?(loc=dummy_loc) = function
   | PTident { id = "int" } -> Tint
   | PTident { id = "bool" } -> Tbool
   | PTident { id = "string" } -> Tstring
   | PTptr ty -> Tptr (type_type ty)
   | PTident i ->
-      let s = Struct_Env.find i.id in
-        Tstruct s
+      if not (Struct_Env.exists i.id) then error loc ("the type " ^ i.id ^ " is undefined")
+      else
+        let s = Struct_Env.find i.id in
+          Tstruct s
 
 let rec valid_type loc = function
   | PTident { id = "int" } -> ()
@@ -295,8 +297,10 @@ and expr_desc env loc = function
     else
       let tlvl = List.map (fun e -> fst (l_expr env ~underscore:true e)) lvl in
       let tyl = list_of_typ (List.map (fun e -> e.expr_typ) tel) in
-      List.iter (fun (e1, ty) -> if not (eq_type e1.expr_typ ty) then error loc ("the variable " ^ (expr_id e1) ^ " has a type " ^ (type_to_string e1.expr_typ) ^ " but is expected to have type " ^ (type_to_string ty))) (List.combine tlvl tyl);
+      (try
+        List.iter (fun (e1, ty) -> if not (eq_type e1.expr_typ ty) then error loc ("the variable " ^ (expr_id e1) ^ " has a type " ^ (type_to_string e1.expr_typ) ^ " but is expected to have type " ^ (type_to_string ty))) (List.combine tlvl tyl);
         TEassign (tlvl,tel), tvoid, false
+      with e -> error loc ("arity doesn't match to assign each variable"))
 
   | PEreturn el ->
     let tel, _ = List.split (List.map (expr env) el) in
@@ -364,7 +368,7 @@ and block_eval env = function
     else error loc "this expression arity doesn't match"
 
   | {pexpr_desc= PEvars (il, Some t, []); pexpr_loc= loc}::l ->
-    let ty = type_type t in
+    let ty = type_type ~loc:loc t in
     let varl = ref [] in
     let up_env = List.fold_left (fun e id ->
       if id.id = "_" then error loc "can't declare _"
@@ -377,7 +381,7 @@ and block_eval env = function
     let tel = List.map (fun exp -> fst (expr env exp)) el in
     let nvar = List.length il and nexp = params_length tel in
     if nvar = nexp then
-      let ty = type_type t in
+      let ty = type_type ~loc:loc t in
       let tyl = list_of_typ (List.map (fun exp -> exp.expr_typ) tel) in
       (* Printf.printf "1. %d, 2. %d, 3. %d\n" (nexp) (List.length tel) (List.length tyl); *)
       let varl = ref [] in
@@ -438,7 +442,9 @@ let rec sizeof = function
   | Tstruct s -> s.s_size
 
 (* 2. declare functions and type fields *)
-let var_of_pparam (id, typ) = new_var id.id id.loc (type_type typ) max_int
+let var_of_pparam (id, typ) = 
+  if id.id = "_" then error id.loc "_ dan't be used as an argument"
+  else new_var id.id id.loc (type_type typ) max_int
 let rec unicity l =
   let rec aux uni = function
     | [] -> true
