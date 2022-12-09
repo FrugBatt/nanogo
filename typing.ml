@@ -30,7 +30,7 @@ let error_typed loc t1 t2 prefix =
 
 let error_typ loc t1 t2 = error_typed loc t1 t2 "this"
 
-(* TODO environnement pour les types structure *)
+(* environnement pour les types structure *)
 module Struct_Env = struct
   let struct_env = Hashtbl.create 5
 
@@ -44,7 +44,7 @@ module Struct_Env = struct
   let void_struct x = struc x (Hashtbl.create 0) 0
 end
 
-(* TODO environnement pour les fonctions *)
+(* environnement pour les fonctions *)
 module Fun_Env = struct
   let func_env = Hashtbl.create 5
 
@@ -162,7 +162,6 @@ module Env = struct
     let e = {map= M.empty; depth= 0} in
     fst (var "_" dummy_loc ~used:true Twild e)
 
-  (* TODO type () et vecteur de types *)
 end
 
 let tvoid = Tmany []
@@ -501,7 +500,7 @@ let file ~debug:b (imp, dl) =
   Hashtbl.iter phase2etdemi struct_ref_tbl;
   if not !found_main then error dummy_loc "missing method main";
   let dl = List.map decl dl in
-  Env.check_unused (); (* TODO variables non utilisees *)
+  Env.check_unused ();
   if imp && not !fmt_used then error dummy_loc "fmt imported but not used";
   if not imp && !fmt_used then error dummy_loc "fmt used but not imported";
   dl
