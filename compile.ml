@@ -85,11 +85,29 @@ let rec expr env e = match e.expr_desc with
   | TEbinop (Band, e1, e2) ->
     (* TODO code pour ET logique lazy *) assert false 
   | TEbinop (Bor, e1, e2) ->
-    (* TODO code pour OU logique lazy *) assert false 
+    let gen_as lab =
+      expr env e1 ++
+      cmpq (imm 1) (reg rdi) ++
+      je lab ++
+      expr env e2 ++
+      cmpq (imm 1) (reg rdi) ++
+      je lab
+    in compile_bool gen_as
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
     (* TODO code pour comparaison ints *) assert false 
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
-    (* TODO code pour arithmetique ints *) assert false 
+    let as_op = match op with
+      | Badd -> addq (reg rax) (reg rdi)
+      | Bsub -> subq (reg rax) (reg rdi)
+      | Bmul -> imulq (reg rax) (reg rdi)
+      | Bdiv -> cqto ++ idivq (reg rdi) ++ movq (reg rax) (reg rdi)
+      | Bmod -> cqto ++ idivq (reg rdi) ++ movq (reg rdx) (reg rdi)
+    in
+    expr env e1 ++
+    pushq (reg rdi) ++
+    expr env e2 ++
+    popq rax ++
+    as_op
   | TEbinop (Beq | Bne as op, e1, e2) ->
     (* TODO code pour egalite toute valeur *) assert false 
   | TEunop (Uneg, e1) ->
@@ -101,7 +119,14 @@ let rec expr env e = match e.expr_desc with
   | TEunop (Ustar, e1) ->
     (* TODO code pour * *) assert false 
   | TEprint el ->
-    (* TODO code pour Print *) assert false 
+    List.fold_left (fun c e ->
+      let pr = match e.expr_typ with
+        | Tint -> call "print_int"
+        | Tbool -> call "print_bool"
+        | _ -> nop
+      in
+      c ++ expr env e ++ pr) nop el
+    (* TODO code pour Print *)
   | TEident x ->
     (* TODO code pour x *) assert false 
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
@@ -111,7 +136,8 @@ let rec expr env e = match e.expr_desc with
   | TEassign (_, _) ->
      assert false
   | TEblock el ->
-     (* TODO code pour block *) assert false
+    List.fold_left (fun c e -> c ++ expr env e) nop el
+     (* TODO code pour block *)
   | TEif (e1, e2, e3) ->
      (* TODO code pour if *) assert false
   | TEfor (e1, e2) ->
@@ -135,11 +161,38 @@ let rec expr env e = match e.expr_desc with
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) 
+  let s = f.fn_name in
+    label ("F_" ^ s) ++ expr empty_env e ++ ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
   | TDstruct _ -> code
+
+let print_int =
+  label "print_int" ++
+  movq (reg rdi) (reg rsi) ++
+  movq (ilab "S_int") (reg rdi) ++
+  xorq (reg rax) (reg rax) ++
+  call "printf" ++
+  ret
+
+let print_bool =
+  let l_false = new_label () in
+    label "print_bool" ++
+    xorq (reg rax) (reg rax) ++
+    cmpq (imm 0) (reg rdi) ++
+    je l_false ++
+    movq (ilab "S_true") (reg rdi) ++
+    call "printf" ++
+    ret ++
+    label l_false ++
+    movq (ilab "S_false") (reg rdi) ++
+    call "printf" ++
+    ret
+
+
+    
+  
 
 let file ?debug:(b=false) dl =
   debug := b;
@@ -151,17 +204,14 @@ let file ?debug:(b=false) dl =
       xorq (reg rax) (reg rax) ++
       ret ++
       funs ++
-      inline "
-print_int:
-        movq    %rdi, %rsi
-        movq    $S_int, %rdi
-        xorq    %rax, %rax
-        call    printf
-        ret
-"; (* TODO print pour d'autres valeurs *)
+      print_int ++
+      print_bool
+; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
-      label "S_int" ++ string "%ld" ++
+      label "S_int" ++ string "%d" ++
+      label "S_true" ++ string "true" ++
+      label "S_false" ++ string "false" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
   }
