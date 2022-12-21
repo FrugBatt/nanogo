@@ -63,11 +63,11 @@ let empty_env =
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
 (* f reçoit le label correspondant à ``renvoyer vrai'' *)
-let compile_bool f =
-  let l_true = new_label () and l_end = new_label () in
-  f l_true ++
-  movq (imm 0) (reg rdi) ++ jmp l_end ++
-  label l_true ++ movq (imm 1) (reg rdi) ++ label l_end
+let compile_bool f b =
+  let l_b = new_label () and l_end = new_label () in
+  f l_b ++
+  movq (imm (1-b)) (reg rdi) ++ jmp l_end ++
+  label l_b ++ movq (imm b) (reg rdi) ++ label l_end
 
 let rec expr env e = match e.expr_desc with
   | TEskip ->
@@ -83,7 +83,14 @@ let rec expr env e = match e.expr_desc with
   | TEconstant (Cstring s) ->
     (* TODO code pour constante string *) assert false 
   | TEbinop (Band, e1, e2) ->
-    (* TODO code pour ET logique lazy *) assert false 
+    let gen_as lab =
+      expr env e1 ++
+      cmpq (imm 0) (reg rdi) ++
+      je lab ++
+      expr env e2 ++
+      cmpq (imm 0) (reg rdi) ++
+      je lab
+    in compile_bool gen_as 0
   | TEbinop (Bor, e1, e2) ->
     let gen_as lab =
       expr env e1 ++
@@ -92,9 +99,20 @@ let rec expr env e = match e.expr_desc with
       expr env e2 ++
       cmpq (imm 1) (reg rdi) ++
       je lab
-    in compile_bool gen_as
+    in compile_bool gen_as 1
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
-    (* TODO code pour comparaison ints *) assert false 
+    let bool_gen lab = match op with
+      | Blt -> jl lab
+      | Ble -> jle lab
+      | Bgt -> jg lab
+      | Bge -> jge lab
+      | _ -> nop (* impossible *)
+    in
+      expr env e1 ++
+      movq (reg rdi) (reg rsi) ++
+      expr env e2 ++
+      cmpq (reg rdi) (reg rsi) ++
+      compile_bool bool_gen 1
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
     let as_op = match op with
       | Badd -> addq (reg rax) (reg rdi)
@@ -102,18 +120,30 @@ let rec expr env e = match e.expr_desc with
       | Bmul -> imulq (reg rax) (reg rdi)
       | Bdiv -> cqto ++ idivq (reg rdi) ++ movq (reg rax) (reg rdi)
       | Bmod -> cqto ++ idivq (reg rdi) ++ movq (reg rdx) (reg rdi)
+      | _ -> nop (* impossible *)
     in
-    expr env e1 ++
-    pushq (reg rdi) ++
-    expr env e2 ++
-    popq rax ++
-    as_op
+      expr env e1 ++
+      pushq (reg rdi) ++
+      expr env e2 ++
+      popq rax ++
+      as_op
   | TEbinop (Beq | Bne as op, e1, e2) ->
-    (* TODO code pour egalite toute valeur *) assert false 
+    let eq_gen lab = match op with
+      | Beq -> je lab
+      | Bne -> jne lab
+      | _ -> nop (* impossible *)
+    in
+      expr env e1 ++
+      movq (reg rdi) (reg rsi) ++
+      expr env e2 ++
+      cmpq (reg rdi) (reg rsi) ++
+      compile_bool eq_gen 1
   | TEunop (Uneg, e1) ->
     (* TODO code pour negation ints *) assert false 
   | TEunop (Unot, e1) ->
-    (* TODO code pour negation bool *) assert false 
+    expr env e1 ++
+    cmpq (imm 0) (reg rdi) ++
+    sete (reg dil)
   | TEunop (Uamp, e1) ->
     (* TODO code pour & *) assert false 
   | TEunop (Ustar, e1) ->
