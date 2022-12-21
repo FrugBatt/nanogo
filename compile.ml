@@ -42,6 +42,11 @@ let alloc_string =
     Hashtbl.add strings l s;
     l
 
+let rec insert_list x = function
+  | [] -> []
+  | [e] -> [e]
+  | h::t -> h::x::(insert_list x t)
+
 let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
 let allocz n = movq (imm n) (reg rdi) ++ call "allocz"
 
@@ -59,6 +64,9 @@ type env = {
 
 let empty_env =
   { exit_label = ""; ofs_this = -1; nb_locals = ref 0; next_local = 0 }
+
+let fun_env fn_name =
+  { empty_env with exit_label = "E_" ^ fn_name }
 
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
@@ -81,7 +89,8 @@ let rec expr env e = match e.expr_desc with
   | TEnil ->
     xorq (reg rdi) (reg rdi)
   | TEconstant (Cstring s) ->
-    (* TODO code pour constante string *) assert false 
+    let slab = alloc_string s in
+      movq (ilab slab) (reg rdi)
   | TEbinop (Band, e1, e2) ->
     let gen_as lab =
       expr env e1 ++
@@ -139,7 +148,8 @@ let rec expr env e = match e.expr_desc with
       cmpq (reg rdi) (reg rsi) ++
       compile_bool eq_gen 1
   | TEunop (Uneg, e1) ->
-    (* TODO code pour negation ints *) assert false 
+      expr env e1 ++
+      negq (reg rdi)
   | TEunop (Unot, e1) ->
     expr env e1 ++
     cmpq (imm 0) (reg rdi) ++
@@ -149,14 +159,15 @@ let rec expr env e = match e.expr_desc with
   | TEunop (Ustar, e1) ->
     (* TODO code pour * *) assert false 
   | TEprint el ->
-    List.fold_left (fun c e ->
+    let prints = List.map (fun e ->
       let pr = match e.expr_typ with
         | Tint -> call "print_int"
         | Tbool -> call "print_bool"
+        | Tstring -> call "print_string"
         | _ -> nop
-      in
-      c ++ expr env e ++ pr) nop el
-    (* TODO code pour Print *)
+      in expr env e ++ pr) el in
+    let pspace = call "print_space" in
+    List.fold_left (fun c e -> c ++ e) nop (insert_list pspace prints)
   | TEident x ->
     (* TODO code pour x *) assert false 
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
@@ -181,30 +192,31 @@ let rec expr env e = match e.expr_desc with
   | TEvars _ ->
      assert false (* fait dans block *)
   | TEreturn [] ->
-    (* TODO code pour return e *) assert false
+    jmp env.exit_label
   | TEreturn [e1] ->
-    (* TODO code pour return e1,... *) assert false
+    expr env e1 ++
+    jmp env.exit_label
   | TEreturn _ ->
      assert false
   | TEincdec (e1, op) ->
-    (* TODO code pour return e++, e-- *) assert false
+    let as_op = match op with
+      | Inc -> incq (reg rdi)
+      | Dec -> decq (reg rdi)
+    in
+      expr env e1 ++
+      as_op
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
-    label ("F_" ^ s) ++ expr empty_env e ++ ret
+    label ("F_" ^ s) ++
+    expr (fun_env s) e ++
+    label ("E_" ^ s) ++
+    ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
   | TDstruct _ -> code
-
-let print_int =
-  label "print_int" ++
-  movq (reg rdi) (reg rsi) ++
-  movq (ilab "S_int") (reg rdi) ++
-  xorq (reg rax) (reg rax) ++
-  call "printf" ++
-  ret
 
 let print_bool =
   let l_false = new_label () in
@@ -220,8 +232,43 @@ let print_bool =
     call "printf" ++
     ret
 
+let print_int_or_nil =
+  label "print_int_or_nil" ++
+    testq (reg rdi) (reg rdi) ++
+    jz "print_nil" ++
+    movq (ind rdi) (reg rdi)
 
-    
+let print_int =
+  label "print_int" ++
+    movq (reg rdi) (reg rsi) ++
+    movq (ilab "S_int") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    ret
+
+let print_string =
+  label "print_string" ++
+    testq (reg rdi) (reg rdi) ++
+    je "print_nil" ++
+    movq (reg rdi) (reg rsi) ++
+    movq (ilab "S_string") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    ret
+
+let print_nil =
+  label "print_nil" ++
+    movq (ilab "S_nil") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    ret
+
+let print_space =
+  label "print_space" ++
+    movq (ilab "S_space") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    ret
   
 
 let file ?debug:(b=false) dl =
@@ -234,14 +281,20 @@ let file ?debug:(b=false) dl =
       xorq (reg rax) (reg rax) ++
       ret ++
       funs ++
+      print_int_or_nil ++
       print_int ++
-      print_bool
-; (* TODO print pour d'autres valeurs *)
-   (* TODO appel malloc de stdlib *)
+      print_bool ++
+      print_string ++
+      print_nil ++
+      print_space
+;   (* TODO appel malloc de stdlib *)
     data =
       label "S_int" ++ string "%d" ++
       label "S_true" ++ string "true" ++
       label "S_false" ++ string "false" ++
+      label "S_string" ++ string "%s" ++
+      label "S_nil" ++ string "<nil>" ++
+      label "S_space" ++ string " " ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
   }
