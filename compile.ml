@@ -55,15 +55,39 @@ let sizeof = Typing.sizeof
 let new_label =
   let r = ref 0 in fun () -> incr r; "L_" ^ string_of_int !r
 
+(* module Env = struct *)
+(*   module M = Map.Make(String) *)
+(*   type t = { *)
+(*     exit_label: string; *)
+(*     ofs_this: int; *)
+(*     nb_locals: int; (* maximum *) *)
+(*     next_local: int; (* 0, 1, ... *) *)
+(*     vars_ofs: int M.t *)
+(*   } *)
+(*   let empty_env = {exit_label= ""; ofs_this= -1; nb_locals= 0; next_local= 0; vars_ofs= M.empty} *)
+(*   let fun_env fn_name = {empty_env with exit_label= "E_" ^ fn_name} *)
+(**)
+(*   let get_ofs e v_name = M.find v_name e.vars_ofs *)
+(**)
+(*   let incr_ofs e = *)
+(*     let vars = M.map (fun ofs -> ofs - 8) e.vars_ofs in *)
+(*     {e with vars_ofs= vars } *)
+(*   let add_var e v_name = *)
+(*     let vars = M.map (fun ofs -> ofs - 8) e.vars_ofs in *)
+(*     {e with vars_ofs= M.add v_name 0 vars; nb_locals= e.nb_locals + 1} *)
+(**)
+(* end *)
+
 type env = {
   exit_label: string;
   ofs_this: int;
-  nb_locals: int ref; (* maximum *)
+  mutable nb_locals: int; (* maximum *)
   next_local: int; (* 0, 1, ... *)
 }
 
+
 let empty_env =
-  { exit_label = ""; ofs_this = -1; nb_locals = ref 0; next_local = 0 }
+  { exit_label = ""; ofs_this = -1; nb_locals = 0; next_local = 0 }
 
 let fun_env fn_name =
   { empty_env with exit_label = "E_" ^ fn_name }
@@ -155,21 +179,23 @@ let rec expr env e = match e.expr_desc with
     cmpq (imm 0) (reg rdi) ++
     sete (reg dil)
   | TEunop (Uamp, e1) ->
-    (* TODO code pour & *) assert false 
+    l_expr env e1
   | TEunop (Ustar, e1) ->
-    (* TODO code pour * *) assert false 
+    expr env e1 ++
+    movq (ind rdi) (reg rdi)
   | TEprint el ->
     let prints = List.map (fun e ->
       let pr = match e.expr_typ with
         | Tint -> call "print_int"
         | Tbool -> call "print_bool"
         | Tstring -> call "print_string"
+        | Tptr _ -> call "print_hexint"
         | _ -> nop
       in expr env e ++ pr) el in
     let pspace = call "print_space" in
     List.fold_left (fun c e -> c ++ e) nop (insert_list pspace prints)
   | TEident x ->
-    (* TODO code pour x *) assert false 
+    movq (ind ~ofs:x.v_addr rbp) (reg rdi)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false 
   | TEassign ([lv], [e1]) ->
@@ -177,12 +203,30 @@ let rec expr env e = match e.expr_desc with
   | TEassign (_, _) ->
      assert false
   | TEblock el ->
-    List.fold_left (fun c e -> c ++ expr env e) nop el
-     (* TODO code pour block *)
+    (* pushq (reg rbp) ++ *)
+    (* movq (reg rsp) (reg rbp) ++ *)
+    eval_block env el
+    (* movq (reg rbp) (reg rsp) ++ *)
+    (* popq rbp *)
   | TEif (e1, e2, e3) ->
-     (* TODO code pour if *) assert false
+    let lab_else = new_label () and lab_end = new_label () in
+      expr env e1 ++
+      testq (reg rdi) (reg rdi) ++
+      jz lab_else ++
+      expr env e2 ++
+      jmp lab_end ++
+    label lab_else ++
+      expr env e3 ++
+    label lab_end
   | TEfor (e1, e2) ->
-     (* TODO code pour for *) assert false
+    let lab_loop_cond = new_label () and lab_loop_end = new_label () in
+    label lab_loop_cond ++
+      expr env e1 ++
+      testq (reg rdi) (reg rdi) ++
+      jz lab_loop_end ++
+      expr env e2 ++
+      jmp lab_loop_cond ++
+    label lab_loop_end
   | TEnew ty ->
      (* TODO code pour new S *) assert false
   | TEcall (f, el) ->
@@ -200,17 +244,44 @@ let rec expr env e = match e.expr_desc with
      assert false
   | TEincdec (e1, op) ->
     let as_op = match op with
-      | Inc -> incq (reg rdi)
-      | Dec -> decq (reg rdi)
+      | Inc -> incq (ind rdi)
+      | Dec -> decq (ind rdi)
     in
-      expr env e1 ++
+      l_expr env e1 ++
       as_op
+
+and l_expr env e = match e.expr_desc with
+  | TEident x ->
+    movq (reg rbp) (reg rdi) ++
+    addq (imm x.v_addr) (reg rdi)
+  | _ -> nop
+
+and eval_block env = function
+  | [] -> nop
+  | {expr_desc= TEvars (vl, el)}::t ->
+    (* let up_env = List.fold_left (fun e v -> Env.add_var e v.v_name) env vl in *)
+      let id = ref ((-8) * (env.nb_locals + 1)) in
+      List.iter (fun v -> v.v_addr <- !id; id := !id-8) vl;
+      env.nb_locals <- env.nb_locals + (List.length vl);
+      (List.fold_left (fun c exp ->
+        c ++
+        expr env exp ++
+        (match exp.expr_typ with
+          | Tmany _ -> nop
+          | _ -> pushq (reg rdi))) nop el) ++
+      eval_block env t
+  | h::t -> expr env h ++ eval_block env t
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
+  let env = fun_env s in
     label ("F_" ^ s) ++
-    expr (fun_env s) e ++
+    pushq (reg rbp) ++
+    movq (reg rsp) (reg rbp) ++
+    expr env e ++
+    movq (reg rbp) (reg rsp) ++
+    popq rbp ++
     label ("E_" ^ s) ++
     ret
 
@@ -245,6 +316,15 @@ let print_int =
     xorq (reg rax) (reg rax) ++
     call "printf" ++
     ret
+
+let print_hexint =
+  label "print_hexint" ++
+    movq (reg rdi) (reg rsi) ++
+    movq (ilab "S_hexint") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    ret
+
 
 let print_string =
   label "print_string" ++
@@ -283,13 +363,15 @@ let file ?debug:(b=false) dl =
       funs ++
       print_int_or_nil ++
       print_int ++
+      print_hexint ++
       print_bool ++
       print_string ++
       print_nil ++
       print_space
 ;   (* TODO appel malloc de stdlib *)
     data =
-      label "S_int" ++ string "%d" ++
+      label "S_int" ++ string "%ld" ++
+      label "S_hexint" ++ string "0x%x" ++
       label "S_true" ++ string "true" ++
       label "S_false" ++ string "false" ++
       label "S_string" ++ string "%s" ++
