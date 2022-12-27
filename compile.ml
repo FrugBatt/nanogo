@@ -101,7 +101,7 @@ let compile_bool f b =
   movq (imm (1-b)) (reg rdi) ++ jmp l_end ++
   label l_b ++ movq (imm b) (reg rdi) ++ label l_end
 
-let rec expr env e = match e.expr_desc with
+let rec expr ?(copy=false) env e = match e.expr_desc with
   | TEskip ->
     nop
   | TEconstant (Cbool true) ->
@@ -194,20 +194,33 @@ let rec expr env e = match e.expr_desc with
       in expr env e ++ pr) el in
     let pspace = call "print_space" in
     List.fold_left (fun c e -> c ++ e) nop (insert_list pspace prints)
-  | TEident x ->
-    movq (ind ~ofs:x.v_addr rbp) (reg rdi)
-  | TEassign ([{expr_desc=TEident x}], [e1]) ->
-    (* TODO code pour x := e *) assert false 
-  | TEassign ([lv], [e1]) ->
-    (* TODO code pour x1,... := e1,... *) assert false 
-  | TEassign (_, _) ->
-     assert false
+  | TEident x -> (match x.v_typ with
+    | Tstruct s when copy ->
+      movq (imm s.s_size) (reg rdi) ++
+      call "allocz" ++
+      l_expr env e ++
+      movq (reg rax) (reg rbx) ++
+      movq (reg rax) (reg rsi) ++
+      movq (imm s.s_size) (reg rdx) ++
+      call "copy_struct" ++
+      movq (reg rbx) (reg rdi)
+    | _ -> movq (ind ~ofs:x.v_addr rbp) (reg rdi))
+  (* | TEassign ([{expr_desc=TEident x}], [e1]) -> *)
+  (*   expr env e1 ++ *)
+  (*   movq (reg rdi) (ind ~ofs:x.v_addr rbp) *)
+  (* | TEassign ([lv], [e1]) -> *)
+  (*   (* TODO code pour x1,... := e1,... *) assert false  *)
+  (* | TEassign (_, _) -> *)
+  (*    assert false *)
+  | TEassign ([v], [e]) ->
+    l_expr env v ++
+    movq (reg rdi) (reg rbx) ++
+    expr env e ~copy:true ++
+    movq (reg rdi) (ind rbx)
+  | TEassign (vl, [e]) -> assert false
+  | TEassign (vl, el) -> assert false
   | TEblock el ->
-    (* pushq (reg rbp) ++ *)
-    (* movq (reg rsp) (reg rbp) ++ *)
     eval_block env el
-    (* movq (reg rbp) (reg rsp) ++ *)
-    (* popq rbp *)
   | TEif (e1, e2, e3) ->
     let lab_else = new_label () and lab_end = new_label () in
       expr env e1 ++
@@ -228,7 +241,9 @@ let rec expr env e = match e.expr_desc with
       jmp lab_loop_cond ++
     label lab_loop_end
   | TEnew ty ->
-     (* TODO code pour new S *) assert false
+    movq (imm (sizeof ty)) (reg rdi) ++
+    call "allocz" ++
+    movq (reg rax) (reg rdi)
   | TEcall (f, el) ->
      (* TODO code pour appel fonction *) assert false
   | TEdot (e1, {f_ofs=ofs}) ->
@@ -254,7 +269,12 @@ and l_expr env e = match e.expr_desc with
   | TEident x ->
     movq (reg rbp) (reg rdi) ++
     addq (imm x.v_addr) (reg rdi)
-  | _ -> nop
+  | TEunop (Ustar, e) ->
+    expr env e
+  | TEdot (e,x) ->
+    l_expr env e ++
+    addq (imm x.f_ofs) (reg rdi)
+  | _ -> assert false (* ce n'est pas une l-value *)
 
 and eval_block env = function
   | [] -> nop
@@ -263,9 +283,10 @@ and eval_block env = function
       let id = ref ((-8) * (env.nb_locals + 1)) in
       List.iter (fun v -> v.v_addr <- !id; id := !id-8) vl;
       env.nb_locals <- env.nb_locals + (List.length vl);
-      (List.fold_left (fun c exp ->
+      (if el = [] then subq (imm ((List.length vl)*8)) (reg rsp)
+      else List.fold_left (fun c exp ->
         c ++
-        expr env exp ++
+        expr env exp ~copy:true ++
         (match exp.expr_typ with
           | Tmany _ -> nop
           | _ -> pushq (reg rdi))) nop el) ++
@@ -349,7 +370,34 @@ let print_space =
     xorq (reg rax) (reg rax) ++
     call "printf" ++
     ret
-  
+
+let allocz =
+  let loop_lab = new_label () in
+    label "allocz" ++
+      movq (reg rdi) (reg rbx) ++
+      call "malloc" ++
+      testq (reg rbx) (reg rbx) ++
+      jnz loop_lab ++
+      ret ++
+    label loop_lab ++
+      movb (imm 0) (ind rax ~index:rbx) ++
+      decq (reg rbx) ++
+      jnz loop_lab ++
+      ret
+
+let copy_struct =
+  let end_lab = new_label () in
+    label "copy_struct" ++
+      testq (reg rdx) (reg rdx) ++
+      jz end_lab ++
+      movq (ind rdi) (reg rcx) ++
+      movq (reg rcx) (ind rsi) ++
+      addq (imm 8) (reg rdi) ++
+      addq (imm 8) (reg rsi) ++
+      subq (imm 8) (reg rdx) ++
+      jmp "copy_struct" ++
+    label end_lab ++
+      ret
 
 let file ?debug:(b=false) dl =
   debug := b;
@@ -367,9 +415,10 @@ let file ?debug:(b=false) dl =
       print_bool ++
       print_string ++
       print_nil ++
-      print_space
-;   (* TODO appel malloc de stdlib *)
-    data =
+      print_space ++
+      allocz ++
+      copy_struct
+    ;data =
       label "S_int" ++ string "%ld" ++
       label "S_hexint" ++ string "0x%x" ++
       label "S_true" ++ string "true" ++
