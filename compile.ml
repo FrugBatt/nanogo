@@ -101,6 +101,13 @@ let compile_bool f b =
   movq (imm (1-b)) (reg rdi) ++ jmp l_end ++
   label l_b ++ movq (imm b) (reg rdi) ++ label l_end
 
+let default_value = function
+  | Tstruct s ->
+    movq (imm s.s_size) (reg rdi) ++
+    call "allocz" ++
+    movq (reg rax) (reg rdi)
+  | _ -> xorq (reg rdi) (reg rdi)
+
 let rec expr ?(copy=false) env e = match e.expr_desc with
   | TEskip ->
     nop
@@ -189,7 +196,7 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
         | Tint -> call "print_int"
         | Tbool -> call "print_bool"
         | Tstring -> call "print_string"
-        | Tptr _ -> call "print_hexint"
+        | Tptr _ -> call "print_ptr"
         | _ -> nop
       in expr env e ++ pr) el in
     let pspace = call "print_space" in
@@ -199,11 +206,13 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
       movq (imm s.s_size) (reg rdi) ++
       call "allocz" ++
       l_expr env e ++
+      pushq (reg rbx) ++
       movq (reg rax) (reg rbx) ++
       movq (reg rax) (reg rsi) ++
       movq (imm s.s_size) (reg rdx) ++
-      call "copy_struct" ++
-      movq (reg rbx) (reg rdi)
+      call "copy_struct" ++ (* copy_struct doesn't use %rbx *)
+      movq (reg rbx) (reg rdi) ++
+      popq rbx
     | _ -> movq (ind ~ofs:x.v_addr rbp) (reg rdi))
   (* | TEassign ([{expr_desc=TEident x}], [e1]) -> *)
   (*   expr env e1 ++ *)
@@ -218,7 +227,14 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     expr env e ~copy:true ++
     movq (reg rdi) (ind rbx)
   | TEassign (vl, [e]) -> assert false
-  | TEassign (vl, el) -> assert false
+  | TEassign (vl, el) ->
+    let vel = List.combine vl el in
+    List.fold_left (fun c (v,e) ->
+      c ++
+      l_expr env v ++
+      movq (reg rdi) (reg rbx) ++
+      expr env e ~copy:true ++
+      movq (reg rdi) (ind rbx)) nop vel
   | TEblock el ->
     eval_block env el
   | TEif (e1, e2, e3) ->
@@ -247,7 +263,8 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
   | TEcall (f, el) ->
      (* TODO code pour appel fonction *) assert false
   | TEdot (e1, {f_ofs=ofs}) ->
-     (* TODO code pour e.f *) assert false
+    expr env e1 ++
+    movq (ind rdi ~ofs:ofs) (reg rdi)
   | TEvars _ ->
      assert false (* fait dans block *)
   | TEreturn [] ->
@@ -272,7 +289,7 @@ and l_expr env e = match e.expr_desc with
   | TEunop (Ustar, e) ->
     expr env e
   | TEdot (e,x) ->
-    l_expr env e ++
+    expr env e ++
     addq (imm x.f_ofs) (reg rdi)
   | _ -> assert false (* ce n'est pas une l-value *)
 
@@ -283,7 +300,10 @@ and eval_block env = function
       let id = ref ((-8) * (env.nb_locals + 1)) in
       List.iter (fun v -> v.v_addr <- !id; id := !id-8) vl;
       env.nb_locals <- env.nb_locals + (List.length vl);
-      (if el = [] then subq (imm ((List.length vl)*8)) (reg rsp)
+      (if el = [] then List.fold_left (fun c v ->
+        c ++
+        default_value v.v_typ ++
+        pushq (reg rdi)) nop vl
       else List.fold_left (fun c exp ->
         c ++
         expr env exp ~copy:true ++
@@ -338,8 +358,10 @@ let print_int =
     call "printf" ++
     ret
 
-let print_hexint =
-  label "print_hexint" ++
+let print_ptr =
+  label "print_ptr" ++
+    testq (reg rdi) (reg rdi) ++
+    je "print_nil" ++
     movq (reg rdi) (reg rsi) ++
     movq (ilab "S_hexint") (reg rdi) ++
     xorq (reg rax) (reg rax) ++
@@ -374,15 +396,18 @@ let print_space =
 let allocz =
   let loop_lab = new_label () in
     label "allocz" ++
+      pushq (reg rbx) ++
       movq (reg rdi) (reg rbx) ++
       call "malloc" ++
       testq (reg rbx) (reg rbx) ++
       jnz loop_lab ++
+      popq rbx ++
       ret ++
     label loop_lab ++
       movb (imm 0) (ind rax ~index:rbx) ++
       decq (reg rbx) ++
       jnz loop_lab ++
+      popq rbx ++
       ret
 
 let copy_struct =
@@ -399,9 +424,15 @@ let copy_struct =
     label end_lab ++
       ret
 
+let offset_decl = function
+  | TDfunction _ -> ()
+  | TDstruct s ->
+    let ofs = ref 0 in
+    Hashtbl.iter (fun _ f -> Printf.printf "ofs : %s.f_ofs = %d\n" f.f_name !ofs; f.f_ofs <- !ofs; ofs := !ofs + (sizeof f.f_typ)) s.s_fields
+
 let file ?debug:(b=false) dl =
   debug := b;
-  (* TODO calcul offset champs *)
+  (* TODO calcul offset champs *) List.iter offset_decl dl;
   (* TODO code fonctions *) let funs = List.fold_left decl nop dl in
   { text =
       globl "main" ++ label "main" ++
@@ -411,7 +442,7 @@ let file ?debug:(b=false) dl =
       funs ++
       print_int_or_nil ++
       print_int ++
-      print_hexint ++
+      print_ptr ++
       print_bool ++
       print_string ++
       print_nil ++
