@@ -89,8 +89,8 @@ type env = {
 let empty_env =
   { exit_label = ""; ofs_this = -1; nb_locals = 0; next_local = 0 }
 
-let fun_env fn_name =
-  { empty_env with exit_label = "E_" ^ fn_name }
+let fun_env f =
+  { empty_env with exit_label = "E_" ^ f.fn_name; nb_locals= List.length f.fn_params}
 
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
@@ -107,6 +107,15 @@ let default_value = function
     call "allocz" ++
     movq (reg rax) (reg rdi)
   | _ -> xorq (reg rdi) (reg rdi)
+
+let push_ret arg_s ret_s =
+  let c = ref nop in
+  for i = 1 to (ret_s / 8) do
+    c := !c ++ pushq (ind rsp ~ofs:(-8 - arg_s))
+  done;
+  !c
+
+
 
 let rec expr ?(copy=false) env e = match e.expr_desc with
   | TEskip ->
@@ -226,7 +235,13 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     movq (reg rdi) (reg rbx) ++
     expr env e ~copy:true ++
     movq (reg rdi) (ind rbx)
-  | TEassign (vl, [e]) -> assert false
+  | TEassign (vl, [e]) ->
+    expr env e ++
+    (List.fold_left (fun c v ->
+      c ++
+      l_expr env v ++
+      popq rbx ++
+      movq (reg rbx) (ind rdi))) nop (List.rev vl)
   | TEassign (vl, el) ->
     let vel = List.combine vl el in
     List.fold_left (fun c (v,e) ->
@@ -261,7 +276,15 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     call "allocz" ++
     movq (reg rax) (reg rdi)
   | TEcall (f, el) ->
-     (* TODO code pour appel fonction *) assert false
+    let arg_s = List.fold_left (fun s v -> s + (sizeof v.v_typ)) 0 f.fn_params in
+    let ret_s = List.fold_left (fun s ty -> s + (sizeof ty)) 0 f.fn_typ in
+      (List.fold_left (fun c exp ->
+        c ++
+        expr env exp ~copy:true ++
+        pushq (reg rdi)) nop el) ++
+      call ("F_"^f.fn_name) ++
+      addq (imm (ret_s + arg_s)) (reg rsp) ++
+      push_ret arg_s ret_s
   | TEdot (e1, {f_ofs=ofs}) ->
     expr env e1 ++
     movq (ind rdi ~ofs:ofs) (reg rdi)
@@ -271,9 +294,14 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     jmp env.exit_label
   | TEreturn [e1] ->
     expr env e1 ++
+    pushq (reg rdi) ++
     jmp env.exit_label
-  | TEreturn _ ->
-     assert false
+  | TEreturn el ->
+    (List.fold_left (fun c exp ->
+      c ++
+      expr env exp ++
+      pushq (reg rdi)) nop el) ++
+    jmp env.exit_label
   | TEincdec (e1, op) ->
     let as_op = match op with
       | Inc -> incq (ind rdi)
@@ -316,14 +344,20 @@ and eval_block env = function
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in
-  let env = fun_env s in
+  let env = fun_env f in
+  let args_addr = ref ((List.length f.fn_params) * 8 + 8) in
+  List.iter (fun v -> v.v_addr <- !args_addr; args_addr := !args_addr - 8) f.fn_params;
     label ("F_" ^ s) ++
     pushq (reg rbp) ++
     movq (reg rsp) (reg rbp) ++
     expr env e ++
+    label ("E_" ^ s) ++
+    (* movq (ind rbp ~ofs:8) (reg r15) ++ *)
     movq (reg rbp) (reg rsp) ++
     popq rbp ++
-    label ("E_" ^ s) ++
+    popq r15 ++
+    push_ret 16 ((List.length f.fn_typ)*8) ++
+    pushq (reg r15) ++
     ret
 
 let decl code = function
