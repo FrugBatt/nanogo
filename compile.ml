@@ -198,7 +198,9 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     l_expr env e1
   | TEunop (Ustar, e1) ->
     expr env e1 ++
-    movq (ind rdi) (reg rdi)
+    (match e.expr_typ with
+      | Tstruct _ -> nop
+      | _ -> movq (ind rdi) (reg rdi))
   | TEprint el ->
     let prints = List.map (fun e ->
       let pr = match e.expr_typ with
@@ -206,6 +208,7 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
         | Tbool -> call "print_bool"
         | Tstring -> call "print_string"
         | Tptr _ -> call "print_ptr"
+        | Tstruct s -> call ("print_struct_"^s.s_name)
         | _ -> nop
       in expr env e ++ pr) el in
     let pspace = call "print_space" in
@@ -223,33 +226,34 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
       movq (reg rbx) (reg rdi) ++
       popq rbx
     | _ -> movq (ind ~ofs:x.v_addr rbp) (reg rdi))
-  (* | TEassign ([{expr_desc=TEident x}], [e1]) -> *)
-  (*   expr env e1 ++ *)
-  (*   movq (reg rdi) (ind ~ofs:x.v_addr rbp) *)
-  (* | TEassign ([lv], [e1]) -> *)
-  (*   (* TODO code pour x1,... := e1,... *) assert false  *)
-  (* | TEassign (_, _) -> *)
-  (*    assert false *)
   | TEassign ([v], [e]) ->
     l_expr env v ++
-    movq (reg rdi) (reg rbx) ++
-    expr env e ~copy:true ++
-    movq (reg rdi) (ind rbx)
+    movq (reg rdi) (reg rsi) ++
+    (* expr env e ~copy:true ++ *)
+    expr env e ++
+    (match e.expr_typ with
+      | Tstruct s -> movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
+      | _ -> movq (reg rdi) (ind rsi))
   | TEassign (vl, [e]) ->
     expr env e ++
     (List.fold_left (fun c v ->
       c ++
       l_expr env v ++
       popq rbx ++
-      movq (reg rbx) (ind rdi))) nop (List.rev vl)
+      (match v.expr_typ with
+        | Tstruct s -> movq (reg rdi) (reg rsi) ++ movq (reg rbx) (reg rdi) ++ movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
+        | _ -> movq (reg rbx) (ind rdi)))) nop (List.rev vl)
   | TEassign (vl, el) ->
     let vel = List.combine vl el in
     List.fold_left (fun c (v,e) ->
       c ++
       l_expr env v ++
-      movq (reg rdi) (reg rbx) ++
-      expr env e ~copy:true ++
-      movq (reg rdi) (ind rbx)) nop vel
+      movq (reg rdi) (reg rsi) ++
+      (* expr env e ~copy:true ++ *)
+      expr env e ++
+      (match v.expr_typ with
+        | Tstruct s -> movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
+        | _ -> movq (reg rdi) (ind rsi))) nop vel
   | TEblock el ->
     eval_block env el
   | TEif (e1, e2, e3) ->
@@ -276,25 +280,30 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     call "allocz" ++
     movq (reg rax) (reg rdi)
   | TEcall (f, el) ->
-    let arg_s = List.fold_left (fun s v -> s + (sizeof v.v_typ)) 0 f.fn_params in
-    let ret_s = List.fold_left (fun s ty -> s + (sizeof ty)) 0 f.fn_typ in
+    (* let arg_s = List.fold_left (fun s v -> s + (sizeof v.v_typ)) 0 f.fn_params in *)
+    (* let ret_s = List.fold_left (fun s ty -> s + (sizeof ty)) 0 f.fn_typ in *)
+    let arg_s = (List.length f.fn_params) * 8 in
+    let ret_s = (List.length f.fn_typ) * 8 in
       (List.fold_left (fun c exp ->
         c ++
         expr env exp ~copy:true ++
-        pushq (reg rdi)) nop el) ++
+        (match exp.expr_typ with
+          | Tmany _ -> nop
+          | _ -> pushq (reg rdi))) nop el) ++
       call ("F_"^f.fn_name) ++
       addq (imm (ret_s + arg_s)) (reg rsp) ++
       push_ret arg_s ret_s
-  | TEdot (e1, {f_ofs=ofs}) ->
+  | TEdot (e1, f) ->
     expr env e1 ++
-    movq (ind rdi ~ofs:ofs) (reg rdi)
+    (match f.f_typ with
+      | Tstruct _ -> addq (imm f.f_ofs) (reg rdi)
+      | _ -> movq (ind rdi ~ofs:f.f_ofs) (reg rdi))
   | TEvars _ ->
      assert false (* fait dans block *)
   | TEreturn [] ->
     jmp env.exit_label
   | TEreturn [e1] ->
     expr env e1 ++
-    pushq (reg rdi) ++
     jmp env.exit_label
   | TEreturn el ->
     (List.fold_left (fun c exp ->
@@ -312,8 +321,9 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
 
 and l_expr env e = match e.expr_desc with
   | TEident x ->
-    movq (reg rbp) (reg rdi) ++
-    addq (imm x.v_addr) (reg rdi)
+    (match e.expr_typ with
+      | Tstruct _ -> movq (ind rbp ~ofs:x.v_addr) (reg rdi)
+      | _ -> movq (reg rbp) (reg rdi) ++ addq (imm x.v_addr) (reg rdi))
   | TEunop (Ustar, e) ->
     expr env e
   | TEdot (e,x) ->
@@ -324,8 +334,7 @@ and l_expr env e = match e.expr_desc with
 and eval_block env = function
   | [] -> nop
   | {expr_desc= TEvars (vl, el)}::t ->
-    (* let up_env = List.fold_left (fun e v -> Env.add_var e v.v_name) env vl in *)
-      let id = ref ((-8) * (env.nb_locals + 1)) in
+    let id = ref ((-8) * (env.nb_locals + 1)) in
       List.iter (fun v -> v.v_addr <- !id; id := !id-8) vl;
       env.nb_locals <- env.nb_locals + (List.length vl);
       (if el = [] then List.fold_left (fun c v ->
@@ -355,9 +364,11 @@ let function_ f e =
     (* movq (ind rbp ~ofs:8) (reg r15) ++ *)
     movq (reg rbp) (reg rsp) ++
     popq rbp ++
-    popq r15 ++
-    push_ret 16 ((List.length f.fn_typ)*8) ++
-    pushq (reg r15) ++
+    (if List.length f.fn_typ > 1 then
+      popq r15 ++
+      push_ret 16 ((List.length f.fn_typ)*8) ++
+      pushq (reg r15)
+    else nop) ++
     ret
 
 let decl code = function
@@ -433,17 +444,15 @@ let allocz =
       pushq (reg rbx) ++
       movq (reg rdi) (reg rbx) ++
       call "malloc" ++
-      testq (reg rbx) (reg rbx) ++
-      jnz loop_lab ++
-      popq rbx ++
-      ret ++
     label loop_lab ++
-      movb (imm 0) (ind rax ~index:rbx) ++
       decq (reg rbx) ++
+      movb (imm 0) (ind rax ~index:rbx) ++
+      testq (reg rbx) (reg rbx) ++
       jnz loop_lab ++
       popq rbx ++
       ret
 
+(* rdi = src ; rsi = dest ; rdx = length *)
 let copy_struct =
   let end_lab = new_label () in
     label "copy_struct" ++
@@ -458,11 +467,48 @@ let copy_struct =
     label end_lab ++
       ret
 
+let call_print_field f = match f.f_typ with
+  | Tint -> call "print_int"
+  | Tbool -> call "print_bool"
+  | Tstring -> call "print_string"
+  | Tptr _ -> call "print_ptr"
+  | Tstruct s -> call ("print_struct_"^s.s_name)
+  | _ -> nop
+
+
+let print_struct s =
+  label ("print_struct_"^s.s_name) ++
+    pushq (reg r15) ++
+    movq (reg rdi) (reg r15) ++
+    movq (ilab "S_struct_open") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    (Hashtbl.fold (fun _ f c ->
+      c ++
+      movq (reg r15) (reg rdi) ++
+      (* addq (imm f.f_ofs) (reg rdi) ++ *)
+      (match f.f_typ with
+        | Tstruct _ -> addq (imm f.f_ofs) (reg rdi)
+        | _ -> movq (ind rdi ~ofs:f.f_ofs) (reg rdi)) ++
+      xorq (reg rax) (reg rax) ++
+      call_print_field f ++
+      xorq (reg rax) (reg rax) ++
+      call "print_space"
+    )) s.s_fields nop ++
+    movq (ilab "S_struct_close") (reg rdi) ++
+    xorq (reg rax) (reg rax) ++
+    call "printf" ++
+    popq r15 ++
+    ret
+
+let struct_print = ref []
+
 let offset_decl = function
   | TDfunction _ -> ()
   | TDstruct s ->
     let ofs = ref 0 in
-    Hashtbl.iter (fun _ f -> Printf.printf "ofs : %s.f_ofs = %d\n" f.f_name !ofs; f.f_ofs <- !ofs; ofs := !ofs + (sizeof f.f_typ)) s.s_fields
+    Hashtbl.iter (fun _ f -> Printf.printf "ofs : %s.f_ofs = %d\n" f.f_name !ofs; f.f_ofs <- !ofs; ofs := !ofs + (sizeof f.f_typ)) s.s_fields;
+    struct_print := (print_struct s)::!struct_print
 
 let file ?debug:(b=false) dl =
   debug := b;
@@ -482,7 +528,8 @@ let file ?debug:(b=false) dl =
       print_nil ++
       print_space ++
       allocz ++
-      copy_struct
+      copy_struct ++
+      (List.fold_left (++) nop !struct_print)
     ;data =
       label "S_int" ++ string "%ld" ++
       label "S_hexint" ++ string "0x%x" ++
@@ -491,6 +538,8 @@ let file ?debug:(b=false) dl =
       label "S_string" ++ string "%s" ++
       label "S_nil" ++ string "<nil>" ++
       label "S_space" ++ string " " ++
+      label "S_struct_open" ++ string "{ " ++
+      label "S_struct_close" ++ string "}" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
   }
