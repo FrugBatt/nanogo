@@ -90,7 +90,7 @@ let empty_env =
   { exit_label = ""; ofs_this = -1; nb_locals = 0; next_local = 0 }
 
 let fun_env f =
-  { empty_env with exit_label = "E_" ^ f.fn_name; nb_locals= List.length f.fn_params}
+  { empty_env with exit_label = "E_" ^ f.fn_name; nb_locals= 0}
 
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
 
@@ -165,7 +165,7 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
   | TEbinop (Badd | Bsub | Bmul | Bdiv | Bmod as op, e1, e2) ->
     let as_op = match op with
       | Badd -> addq (reg rax) (reg rdi)
-      | Bsub -> subq (reg rax) (reg rdi)
+      | Bsub -> subq (reg rdi) (reg rax) ++ movq (reg rax) (reg rdi)
       | Bmul -> imulq (reg rax) (reg rdi)
       | Bdiv -> cqto ++ idivq (reg rdi) ++ movq (reg rax) (reg rdi)
       | Bmod -> cqto ++ idivq (reg rdi) ++ movq (reg rdx) (reg rdi)
@@ -202,17 +202,35 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
       | Tstruct _ -> nop
       | _ -> movq (ind rdi) (reg rdi))
   | TEprint el ->
-    let prints = List.map (fun e ->
-      let pr = match e.expr_typ with
-        | Tint -> call "print_int"
-        | Tbool -> call "print_bool"
-        | Tstring -> call "print_string"
-        | Tptr _ -> call "print_ptr"
-        | Tstruct s -> call ("print_struct_"^s.s_name)
-        | _ -> nop
-      in expr env e ++ pr) el in
-    let pspace = call "print_space" in
-    List.fold_left (fun c e -> c ++ e) nop (insert_list pspace prints)
+    let print_call exp = match exp.expr_typ with
+      | Tint -> call "print_int"
+      | Tbool -> call "print_bool"
+      | Tstring -> call "print_string"
+      | Tptr _ -> call "print_ptr"
+      | Tstruct s -> call ("print_struct_"^s.s_name)
+      | _ -> nop
+    in 
+    let rec gen_as = function
+      | [] -> nop
+      | [e1] -> expr env e1 ++ print_call e1
+      | e1::e2::t ->
+        if e1.expr_typ = Tstring || e2.expr_typ = Tstring then expr env e1 ++ print_call e1 ++ gen_as (e2::t)
+        else expr env e1 ++ print_call e1 ++ call "print_space" ++ gen_as (e2::t)
+    in
+    gen_as el
+      
+
+    (* let prints = List.map (fun e -> *)
+    (*   let pr = match e.expr_typ with *)
+    (*     | Tint -> call "print_int" *)
+    (*     | Tbool -> call "print_bool" *)
+    (*     | Tstring -> call "print_string" *)
+    (*     | Tptr _ -> call "print_ptr" *)
+    (*     | Tstruct s -> call ("print_struct_"^s.s_name) *)
+    (*     | _ -> nop *)
+    (*   in expr env e ++ pr) el in *)
+    (* let pspace = call "print_space" in *)
+    (* List.fold_left (fun c e -> c ++ e) nop (insert_list pspace prints) *)
   | TEident x -> (match x.v_typ with
     | Tstruct s when copy ->
       movq (imm s.s_size) (reg rdi) ++
@@ -244,16 +262,29 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
         | Tstruct s -> movq (reg rdi) (reg rsi) ++ movq (reg rbx) (reg rdi) ++ movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
         | _ -> movq (reg rbx) (ind rdi)))) nop (List.rev vl)
   | TEassign (vl, el) ->
-    let vel = List.combine vl el in
-    List.fold_left (fun c (v,e) ->
+    List.fold_left (fun c e ->
+      c ++
+      expr env e ++
+      pushq (reg rdi)) nop (List.rev el) ++
+    List.fold_left (fun c v ->
       c ++
       l_expr env v ++
       movq (reg rdi) (reg rsi) ++
-      (* expr env e ~copy:true ++ *)
-      expr env e ++
+      popq (rdi) ++
       (match v.expr_typ with
         | Tstruct s -> movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
-        | _ -> movq (reg rdi) (ind rsi))) nop vel
+        | _ -> movq (reg rdi) (ind rsi))) nop vl
+
+    (* let vel = List.combine vl el in *)
+    (* List.fold_left (fun c (v,e) -> *)
+    (*   c ++ *)
+    (*   l_expr env v ++ *)
+    (*   movq (reg rdi) (reg rsi) ++ *)
+    (*   (* expr env e ~copy:true ++ *) *)
+    (*   expr env e ++ *)
+    (*   (match v.expr_typ with *)
+    (*     | Tstruct s -> movq (imm s.s_size) (reg rdx) ++ call "copy_struct" *)
+    (*     | _ -> movq (reg rdi) (ind rsi))) nop vel *)
   | TEblock el ->
     eval_block env el
   | TEif (e1, e2, e3) ->
@@ -291,8 +322,9 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
           | Tmany _ -> nop
           | _ -> pushq (reg rdi))) nop el) ++
       call ("F_"^f.fn_name) ++
-      addq (imm (ret_s + arg_s)) (reg rsp) ++
-      push_ret arg_s ret_s
+      (match e.expr_typ with
+        | Tmany _ -> addq (imm (ret_s + arg_s)) (reg rsp) ++ push_ret arg_s ret_s
+        | _ -> addq (imm arg_s) (reg rsp))
   | TEdot (e1, f) ->
     expr env e1 ++
     (match f.f_typ with
@@ -507,7 +539,7 @@ let offset_decl = function
   | TDfunction _ -> ()
   | TDstruct s ->
     let ofs = ref 0 in
-    Hashtbl.iter (fun _ f -> Printf.printf "ofs : %s.f_ofs = %d\n" f.f_name !ofs; f.f_ofs <- !ofs; ofs := !ofs + (sizeof f.f_typ)) s.s_fields;
+    Hashtbl.iter (fun _ f -> f.f_ofs <- !ofs; ofs := !ofs + (sizeof f.f_typ)) s.s_fields;
     struct_print := (print_struct s)::!struct_print
 
 let file ?debug:(b=false) dl =
@@ -538,7 +570,7 @@ let file ?debug:(b=false) dl =
       label "S_string" ++ string "%s" ++
       label "S_nil" ++ string "<nil>" ++
       label "S_space" ++ string " " ++
-      label "S_struct_open" ++ string "{ " ++
+      label "S_struct_open" ++ string "{" ++
       label "S_struct_close" ++ string "}" ++
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
