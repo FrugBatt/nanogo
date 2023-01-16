@@ -38,10 +38,10 @@ module Struct_Env = struct
   let add s = Hashtbl.add struct_env s.s_name s
   let exists s_name = Hashtbl.mem struct_env s_name
 
-  let struc x fields size =
-    let s = {s_name= x; s_fields= fields; s_size= size} in
+  let struc x fields name_l size =
+    let s = {s_name= x; s_fields= fields; s_name_order= name_l; s_size= size} in
       add s, s
-  let void_struct x = struc x (Hashtbl.create 0) 0
+  let void_struct x = struc x (Hashtbl.create 0) [] 0
 end
 
 (* environnement pour les fonctions *)
@@ -472,12 +472,12 @@ let phase2 = function
         List.iter (fun (fid, ftyp) -> 
           valid_type fid.loc ftyp;
           if List.mem fid.id !fnames then error fid.loc ("field " ^ fid.id ^ " already defined")
-          else if struct_ref ftyp then Hashtbl.add struct_ref_tbl id (fid.id, ftyp)
+          else if struct_ref ftyp then (Hashtbl.add struct_ref_tbl id (fid.id, ftyp); fnames := fid.id :: !fnames)
           else
           (fnames := fid.id :: !fnames;
           let f = {f_name= fid.id; f_typ= type_type ftyp; f_ofs= 0} in Hashtbl.add ht fid.id f)) fl; 
         let size = Hashtbl.fold (fun _ f i -> i + (sizeof f.f_typ)) ht 0 in
-          ignore (Struct_Env.struc id ht size)
+          ignore (Struct_Env.struc id ht (List.rev !fnames) size)
 
 let phase2etdemi id (fid, ftyp) =
   let s = Struct_Env.find id in

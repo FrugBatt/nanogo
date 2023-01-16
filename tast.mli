@@ -24,6 +24,7 @@ and field = {
 and structure = {
           s_name: string;
         s_fields: (string, field) Hashtbl.t;
+    s_name_order: string list;
   mutable s_size: int; (* taille calculee en octets *)
 }
 

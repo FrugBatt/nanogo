@@ -515,18 +515,30 @@ let print_struct s =
     movq (ilab "S_struct_open") (reg rdi) ++
     xorq (reg rax) (reg rax) ++
     call "printf" ++
-    (Hashtbl.fold (fun _ f c ->
-      c ++
-      movq (reg r15) (reg rdi) ++
-      (* addq (imm f.f_ofs) (reg rdi) ++ *)
-      (match f.f_typ with
-        | Tstruct _ -> addq (imm f.f_ofs) (reg rdi)
-        | _ -> movq (ind rdi ~ofs:f.f_ofs) (reg rdi)) ++
-      xorq (reg rax) (reg rax) ++
-      call_print_field f ++
-      xorq (reg rax) (reg rax) ++
-      call "print_space"
-    )) s.s_fields nop ++
+    (let print_calls = List.map (fun name ->
+      let f = Hashtbl.find s.s_fields name in
+        movq (reg r15) (reg rdi) ++
+        (match f.f_typ with
+          | Tstruct _ -> addq (imm f.f_ofs) (reg rdi)
+          | _ -> movq (ind rdi ~ofs:f.f_ofs) (reg rdi)) ++
+        xorq (reg rax) (reg rax) ++
+        call_print_field f 
+    ) s.s_name_order in
+    let code = insert_list (call "print_space") print_calls in
+    List.fold_left (++) nop code) ++
+    (* rajouter les pspace *)
+    (* (Hashtbl.fold (fun _ f c -> *)
+    (*   c ++ *)
+    (*   movq (reg r15) (reg rdi) ++ *)
+    (*   (* addq (imm f.f_ofs) (reg rdi) ++ *) *)
+    (*   (match f.f_typ with *)
+    (*     | Tstruct _ -> addq (imm f.f_ofs) (reg rdi) *)
+    (*     | _ -> movq (ind rdi ~ofs:f.f_ofs) (reg rdi)) ++ *)
+    (*   xorq (reg rax) (reg rax) ++ *)
+    (*   call_print_field f ++ *)
+    (*   xorq (reg rax) (reg rax) ++ *)
+    (*   call "print_space" *)
+    (* )) s.s_fields nop ++ *)
     movq (ilab "S_struct_close") (reg rdi) ++
     xorq (reg rax) (reg rax) ++
     call "printf" ++
