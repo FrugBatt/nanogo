@@ -246,9 +246,11 @@ let rec expr ?(copy=false) env e = match e.expr_desc with
     | _ -> movq (ind ~ofs:x.v_addr rbp) (reg rdi))
   | TEassign ([v], [e]) ->
     l_expr env v ++
-    movq (reg rdi) (reg rsi) ++
+    (* movq (reg rdi) (reg rsi) ++ *)
+    pushq (reg rdi) ++
     (* expr env e ~copy:true ++ *)
     expr env e ++
+    popq rsi ++
     (match e.expr_typ with
       | Tstruct s -> movq (imm s.s_size) (reg rdx) ++ call "copy_struct"
       | _ -> movq (reg rdi) (ind rsi))

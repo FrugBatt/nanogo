@@ -1,6 +1,5 @@
 _build/
 ngoc
 *.dot
-*.go
 *.png
 *.s
