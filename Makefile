@@ -1,17 +1,17 @@
 
 EXE=_build/default/main.exe
 
-all: $(EXE)
+all: $(EXE) rapport.pdf
 
 $(EXE): *.ml*
 	dune build @all
 	cp $(EXE) ngoc 
 
-test: $(EXE) test.go
-	./ngoc --debug test.go
-	gcc -g -no-pie test.s -o test
-	./test
-	go run test.go
+test: $(EXE)
+	./tests/exec_tests.sh
+
+rapport.pdf: rapport.tex
+	pdflatex rapport.tex > /dev/null
 
 export-%:
 	cp test.go ../tests/exec/$*.go
@@ -20,3 +20,4 @@ export-%:
 .PHONY: clean
 clean:
 	dune clean
+	rm -f ngoc *.aux *.pdf *.log

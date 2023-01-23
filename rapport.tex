@@ -1,0 +1,245 @@
+\documentclass[10pt]{report}
+
+%-----------------------------------
+%--- Hugoooo default latex header---
+%-----------------------------------
+
+
+%---PACKAGES---
+
+\usepackage[Glenn]{fncychap}
+
+\usepackage{fancyhdr}
+
+\usepackage[utf8x]{inputenc} 
+\usepackage[T1]{fontenc}      
+\usepackage[french]{babel} 
+
+\usepackage{array}
+
+\usepackage{mathtools}
+\usepackage{amssymb}
+\usepackage{mathrsfs}
+\usepackage{mathabx}
+
+\usepackage{xcolor}
+\usepackage{graphicx}
+
+\usepackage[a4paper]{geometry}
+\geometry{hscale=0.95,vscale=0.89,centering}
+
+%%\BB
+\newcommand{\QQ}{\mathbb{Q}}
+\newcommand{\WW}{\mathbb{W}}
+\newcommand{\EE}{\mathbb{E}}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\TT}{\mathbb{T}}
+\newcommand{\YY}{\mathbb{Y}}
+\newcommand{\UU}{\mathbb{U}}
+\newcommand{\II}{\mathbf{1}}
+\newcommand{\OO}{\mathbb{O}}
+\newcommand{\PP}{\mathbb{P}}
+\renewcommand{\AA}{\mathbb{A}}
+\renewcommand{\SS}{\mathbb{S}}
+\newcommand{\DD}{\mathbb{D}}
+\newcommand{\FF}{\mathbb{F}}
+\newcommand{\GG}{\mathbb{G}}
+\newcommand{\HH}{\mathbb{H}}
+\newcommand{\JJ}{\mathbb{J}}
+\newcommand{\KK}{\mathbb{K}}
+\newcommand{\LL}{\mathbb{L}}
+\newcommand{\ZZ}{\mathbb{Z}}
+\newcommand{\XX}{\mathbb{X}}
+\newcommand{\CC}{\mathbb{C}}
+\newcommand{\VV}{\mathbb{V}}
+\newcommand{\BB}{\mathbb{B}}
+\newcommand{\NN}{\mathbb{N}}
+\newcommand{\MM}{\mathbb{M}}
+
+
+%%\CAL
+\newcommand{\A}{\mathcal{A}}
+\newcommand{\B}{\mathcal{B}}
+\newcommand{\C}{\mathcal{C}}
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\E}{\mathcal{E}}
+\newcommand{\F}{\mathcal{F}}
+\newcommand{\G}{\mathcal{G}}
+\renewcommand{\H}{\mathcal{H}}
+\newcommand{\I}{\mathcal{I}}
+\newcommand{\J}{\mathcal{J}}
+\newcommand{\K}{\mathcal{K}}
+\renewcommand{\L}{\mathcal{L}}
+\newcommand{\M}{\mathcal{M}}
+\newcommand{\N}{\mathcal{N}}
+\renewcommand{\O}{\mathcal{O}}
+\renewcommand{\P}{\mathcal{P}}
+\newcommand{\Q}{\mathcal{Q}}
+\newcommand{\R}{\mathcal{R}}
+\renewcommand{\S}{\mathcal{S}}
+\newcommand{\T}{\mathcal{T}}
+\newcommand{\U}{\mathcal{U}}
+\newcommand{\V}{\mathcal{V}}
+\newcommand{\W}{\mathcal{W}}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\Y}{\mathcal{Y}}
+\newcommand{\Z}{\mathcal{Z}}
+
+%---COMMANDS---
+\newcommand{\function}[5]{\begin{array}[t]{lrcl}
+#1: & #2 & \longrightarrow & #3 \\
+    & #4 & \longmapsto & #5 \end{array}}
+    
+\newcommand{\vect}{\text{vect}}
+\renewcommand{\ker}{\text{Ker}}
+\newcommand{\ens}[3]{\mathcal{#1}_{#2}(\mathbb{#3})}
+\newcommand{\ensmat}[2]{\ens{M}{#1}{#2}}
+\newcommand{\mat}{\text{Mat}}
+\newcommand{\comp}{\text{Comp}}
+\newcommand{\pass}{\text{Pass}}
+\renewcommand{\det}{\text{det}}
+\newcommand{\dev}{\text{Dev}}
+\newcommand{\com}{\text{Com}}
+\newcommand{\card}{\text{card}}
+\newcommand{\esc}{\text{Esc}}
+\newcommand{\cpm}{\text{CPM}}
+\newcommand{\dif}{\mathop{}\!\textnormal{\slshape d}}
+\newcommand{\enc}[3]{\left#1 #2 \right#3}
+\newcommand{\ent}[2]{\enc{#1}{#2}{#1}}
+\newcommand{\norm}[1]{\ent{\|}{#1}}
+\newcommand{\pth}[1]{\left( #1 \right)}
+\newcommand{\trans}{\text{Trans}}
+\newcommand{\ind}{\text{Ind}}
+\newcommand{\tfinite}{\text{T-finite}}
+\newcommand{\tinfinite}{\text{T-infinite}}
+
+%---HEAD---
+
+\title{}
+\author{}
+\date{\today}
+
+\renewcommand\thesection{\arabic{section}}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{FRUCHET Hugo}
+\chead{Projet de programmation 1}
+\rhead{}
+\cfoot{\thepage}
+
+\begin{document}
+
+\section{Projet}
+Le projet de programmation 1 consiste à réaliser un compilateur de \verb|NanoGo| vers de l'\verb|assembly x86_64| en \verb|OCaml|. Le projet (nommé ensuite \verb|ngoc|) consiste donc à transformer un fichier textuel comprenant du code \verb|NanoGo| (d'extension \verb|.go|) en fichier textuel contenant du code \verb|x86_64| (d'extension \verb|.s|). La compilation du code \verb|x86_64| en code machine se fait à l'aide de \verb|gcc| qui s'occupe de faire l'édition des liens. \\
+\indent Pour cela, le compilateur a été divisé en 3 grandes parties : le parser, le typing et la compilation.
+
+\section{Parser}
+Le parser était déjà précodée dans le projet et n'a pas nécessité de travail en plus. Dans cette partie le compilateur va d'abord de réaliser une analyse lexicale : le fichier source va être convertie en une suite de lexèmes qui correspondent aux mots et symboles du fichier source. Ensuite, une analyse syntaxique transforme la suite de lexèmes en AST (abstract syntax tree) qui modélise le programme sous forme d'un arbre d'expressions. \\
+\indent Cette partie ne va détécter que les erreurs de lexique et de syntaxe (dû a un programme qui n'est pas correctement écrit). \\
+\indent Pour réaliser cela, le parser utilise l'outil \verb|ocamllex| pour réaliser l'analyse lexicale et \verb|ocamlyacc| pour l'analyse syntaxique. Ces outils créent des codes \verb|ocaml| à partir de fichiers définissant précisément la syntaxe du langage \verb|NanoGo|.
+
+\section{Typing}
+
+\subsection{Principe}
+
+Le \verb|NanoGo| est un langage fortement typé. Ainsi une analyse des types est nécessaire et est effectuée dans la partie typing. À partir de l'AST construit par le parser, le typing va créer un TAST (typed abstract syntax tree) ou on va vérifier et ajouter les types des expressions dans l'AST. \\
+\indent Cette partie ne détectera que des erreurs liées à de mauvais types sur les expressions.
+
+\subsection{Fonctionnement général}
+
+Pour implémenter cette partie, on défini dans le fichier \verb|tast.mli| les différents types des objets et le type du TAST, et le fichier \verb|typing.ml| est chargé d'implémenter la création du TAST. La fonction \verb|file| est l'entrée du typing, elle reçoit l'AST, vérifie l'existence d'une fonction \verb|main| (point d'entrée du programme) puis appelle la fonction \verb|expr| qui à partir d'un AST renvoie le TAST correspondant si aucune erreur de type n'est présente, sinon on stoppe le programme et on signale l'erreur le plus précisément possible (cela revient à avoir la position de l'erreur dans le fichier source et une phrase expliquant la nature de l'erreur détectée).
+
+\subsection{Fonctionnement précis}
+
+Pour fonctionner on défini d'abord 3 modules représentant des environnements :
+\begin{itemize}
+  \item L'environnement des structures
+  \item L'environnement des fonctions
+  \item L'environnement des variables
+\end{itemize}
+\indent L'environnement des variables est implémenté avec la structure de donnée \verb|Map| : une telle structure de donnée est plus efficace car elle est immuable et l'ajout d'un élément crée une seconde strucutre la possédant sans changer la structure initiale. Ainsi lorsqu'on quitte un bloc, on peut récupérer l'ancien environnement de variables sans essayer de retirer les variables du bloc une par une. \\
+\indent Ensuite, les environnements de structures et de fonctions sont implémentés avec la structure de donnée \verb|Hashtbl| : une telle structure de donnée est muable, ce qui correspond avec le fait qu'une structure ou une fonction déclarée existe partout dans le programme. Ainsi il existe un seul tel environnement qui est accessible dans tout le typing. \\
+\indent Le processus de création du TAST est découpé en 3 phases :
+
+\subsubsection{Phase 1}
+
+Pour vérifier convenablement les types, il est nécessaire de tous les connaitre. Or les types structures sont des types supplémentaires définis dans le code. Ainsi la phase 1 a pour but de parcourir de parcourir les déclarations et pour chaque structure, elle ajoute une première structure vide à l'environnement des structures. On déclare une structure vide car si dans une structure on a besoin d'une autre structure pas encore enregistré la compilation va planter.
+
+\subsubsection{Phase 2}
+
+Dans cette phase on va parcourir les déclarations de fonctions et de structures, et pour chaque déclaration créer le vrai objet le représentant ainsi que l'ajoute dans l'environnement correspondant. Pour le cas des structures possédant des structures, une vérification d'une définition récursive est aussi effectuée (utiliser un pointeur n'est pas une définition récursive). Pour le cas des fonctions, on crée que l'objet représentant la fonction (c'est à dire le type des arguments et les types de retour et le nom de la fonction), aucun parcours du corps de la fonction n'est effectué à cette étape.
+
+\subsubsection{Phase 3}
+
+C'est la création du TAST, les structures sont ignorées (car déjà enregistrées), on va donc seulement parcourir le corps des fonctions en vérifiant les types et en typant les expressions. Pour cela on appelle la fonction \verb|expr| sur l'AST qui est une fonction récursive. Elle va faire un filtrage selon le type de la racine, vérifier les types, vérifier si on a bien un \verb|return| si il est nécessaire, créer récursivement les sous TAST pour ensuite retourner le TAST correct. Une fonction \verb|l-expr| est aussi présente et permets de générer le TAST en vérifiant que l'expression est une l-value. Ainsi la fonction \verb|expr| va faire :
+
+\begin{itemize}
+  \item Pour une constante, on retourne le TAST de la constante avec le type de la constante.
+  \item Pour un opérateur binaire, on génére les TAST des deux expressions, on vérifie que les types sont corrects et on retourne le TAST correspondant.
+  \item Pour un opérateur unaire, on génére le TAST de l'expression en vérifiant si nécéssaire si c'est une l-value. On vérifie les types et on renvoie le TAST correspondant.
+  \item Pour le \verb|fmt.Print|, on génére les TAST pour ensuite construire un TAST de l'expression (tous les types sont acceptés).
+  \item Pour le \verb|new|, on vérifie qu'on a en argument un type correct, et on construit le TAST correspondant.
+  \item Pour un appel de fonction, on vérifie l'existence de la fonction, on génére le TAST des arguments, on vérifie les types et on retourne le TAST correspondant
+  \item Pour un \verb|for|, on génére les TAST, et on vérifie que le type de la condition soit bien un \verb|bool|. et on renvoie le TAST.
+  \item Pour le \verb|if|, on génére les TAST, et on vérifie les types, et on renvoie le TAST
+  \item Pour le \verb|nil|, on renvoie le TAST avec le type \verb|Tptr Twild| (pointeur vers n'importe quoi).
+  \item Pour le \verb|.|, on génère les TAST, puis on vérifie les types et l'existence du field dans la structure, et on retourne le TAST correspondant.
+  \item Pour le assign, on génére les TAST en vérifiant que les expressions de droites soient bien des l-value, on vérifie les types pour chaque couple puis on retourne le TAST correspondant.
+  \item Pour le \verb|return|, on génére les TAST, on vérifie que le type renvoyé correspond au type de la fonction actuelle, et on signale que le bloc actuel contient bien un \verb|return|.
+  \item Pour le bloc, on va générer récursivement chaque TAST en vérifiant si une expression est la déclaration d'une variable. Si oui, on déclare la variable correctement en l'ajoutant à l'environnement et rend disponible cette variable dans la suite du bloc. Si non on génére simplement le TAST.
+  \item L'incrément ou le décrément, on génére les TAST en vérifiant que ce soient bien des l-value et en vérifiant que ce soient des entiers, et on retourne le TAST correspondant.
+\end{itemize}
+
+\subsection{Problèmes rencontrés et solutions}
+
+Lors de la création du typing, j'ai rencontré plusieurs problèmes.
+\begin{itemize}
+  \item J'ai rencontré un premier problème lors du typage avec le shadowing. Lorsqu'on déclare à nouveau une variable dans un sous bloc, il faut que cette nouvelle variable remplace l'ancienne dans le bloc. Or il était impossible de détecter si une variable était déclarée dans le bloc courant ou non. Pour cela j'ai ajouté à l'environnement des variables la notion de profondeur actuelle, ainsi lors de la création d'une variable il fallait vérifier si la variable existait déjà à la profondeur actuelle, si oui alors il fallait lancer une erreur, si non il fallait accepter la nouvelle variable en la créant.
+  \item Lors de l'implémentation du cas de la variable \verb|_|, une telle variable devait pouvoir être utilisée sans même être déclarée. Ainsi j'ai du rajouter une pseudo-variable en amont de toute expression correspondant à cette variable et qui permet de l'utiliser sans erreur, il fallait aussi pouvoir la déclarer et quelle redirige toujours vers la même variable.
+\end{itemize}
+
+\section{Compilation}
+
+\subsection{Principe}
+
+Une fois la vérification des types effectués, le programme est correct, il faut maintenant le traduire en langage assembly en respectant la sémantique. On va donc dans cette partie à partir du TAST précédemment généré construire le code assembly et l'écrire dans un fichier \verb|.s|. \\
+\indent Cette partie ne détecte aucune erreur de code, car toute les vérifications ont déjà été faites.
+
+\subsection{Fonctionnement général}
+
+Pour implémenter cette partie, on utilise le fichier \verb|compile.ml| qui commence en appelant la fonction \verb|file| avec le TAST en argument. Pour cela, on utilise la librairie \verb|x86_64.ml| qui ajoute un type correspondant au code assembly qu'on crée. Ainsi, on va utiliser comme dans le typing une fonction \verb|expr| qui a partir d'un TAST nous renvoie un code assembly défini dans la librairie.
+
+\subsection{Fonctionnement précis}
+
+Pour générer le code assembly, on va utiliser une fonction récursive \verb|expr| qui en fonction de la racine du TAST va générer récursivement les codes des sous expressions et construire le code assembly de l'expression voulue. Pour fonctionner le code assembly généré d'une expression doit après son exécution mettre la valeur de l'expression dans le registre \verb|%rdi|. Cependant, pour certains expressions utilisant des l-value, il est nécessaire d'accéder à l'adresse en mémoire de la l-value, ainsi on va, comme dans le typing, utiliser une fonction \verb|l_expr| qui a partir du TAST d'une l-value va retourner le code assembly permettant de mettre l'adresse de l'expression dans le registre \verb|%rdi|. De plus, pour gérer l'affichage de mes structures de données, j'ai ajouté dans \verb|compile.ml| une fonction assembly pour chaque type permettant d'afficher la valeur souhaitée dans le bon format, et un schéma de construction d'une fonction assembly pour afficher une structure qui sont toutes utilisées avec l'appel \verb|fmt.Print|. Ainsi la fonction \verb|expr| va faire :
+\begin{itemize}
+  \item Pour une constante, on \verb|movq| la constante directement dans \verb|%rdi|
+  \item Pour un opérateur binaire, on calcule dans \verb|%rdi| le résultat de la première expression, on le met dans la pile pour ne pas oublier la valeur, on calcule la seconde expression dans \verb|%rdi|, puis on récupère la valeur dans la pile et on calcule la valeur souhaitée (pour les opérateurs binaires booléens, on va d'abord vérifier la valeur du premier booléen pour avoir une évaluation paresseuse)
+  \item Pour un opérateur unaire, on calcule l'expression dans \verb|%rdi| (si besoin on calcule l'adresse de l'expression avec \verb|l_expr|) et on met dans \verb|%rdi| la valeur attendue
+  \item Pour le \verb|fmt.Print|, on va calculer chaque expression en appelant la fonction d'affichage correspondant au type
+  \item Pour le \verb|new|, on va appeler \verb|allocz| sur la taille du type demandé et mettre l'adresse de la zone dans \verb|%rdi|
+  \item Pour un appel de fonction, on calcule chaque argument en le mettant dans la pile dans le bon sens. Ensuite on appelle la fonction qui s'occupe de rajouter sur la pile les valeurs de retour (sauf si elle n'a qu'une seule valeur de retour et dans ce cas la valeur est envoyé dans \verb|%rdi|). Puis on retire de la pile les arguments précédemment ajoutés en conservant les valeurs de retour.
+  \item Pour un \verb|for|, on va ajouter un label puis vérifier la condition de bouclage et exécuter le corps de la boucle si nécessaire et revenir au label initial.
+  \item Pour le \verb|if|, on va évaluer la condition, et on va sauter au label correspondant et ensuite générer chaque label true ou false en générant le code assembly de l'expression associée.
+  \item Pour le \verb|nil|, on va simplement placer dans \verb|rdi| le pointeur vers l'adresse \verb|0|
+  \item Pour le assign, pour éviter les problèmes avec des affectations du type \verb|a,b = b,a|, on calcule dans un premier temps toutes les expressions à gauche et on empile le résultat et finalement, pour chaque valeur calculée, on calcule l'adresse de la l-value a qui on veut modifier la valeur et on envoie la nouvelle valeur dans la bonne case.
+  \item Pour le \verb|return|, on calcule le.s valeur.s de retour puis on jump sur le label de fin de fonction (ou on va bien remettre les pointeurs et la pile dans l'état initial puis replacer les valeurs de retour)
+  \item Pour le bloc, on évalue chacune des expressions dans son contenu, et si on a une déclaration de variable, on va enregistrer son position relative par rapport au pointeur \verb|%rbp| qui est fixé en amont de la fonction, puis on va calculer et empiler la valeur de son expression (ou générer une valeur par défaut pour une déclaration sans valeur).
+  \item Pour l'incrément ou le décrément, on va calculer l'adresse de la l-value qu'on a, et on va modifier sa valeur au travers de son adresse comme souhaité.
+\end{itemize}
+
+\subsection{Problèmes rencontrés et solutions}
+
+Durant la mise en place de la partie compilation du projet, j'ai rencontré plusieurs problèmes :
+\begin{itemize}
+  \item Lors d'une première implémentation des structures, j'ai d'abord essayé de gérer une structure comme une simple variable sauf qu'elle prend plus de place dans la pile. Cependant comme la fonction \verb|expr| est censé généré un code assembly qui met dans \verb|%rdi| la valeur de l'expression souhaitée, si l'expression valait une structure qui fait plus d'un octet en mémoire, alors il était impossible de la mettre dans le registre. Ainsi j'ai dû, pour corriger ce problème, gérer en assembly les structures comme des pointeurs de structure et considérer toute les structure sur le tas. Ainsi, dans ma pile et dans les registres, une structure est un pointeur vers les données de la structure.
+  \item Une fois la première correction faite, j'ai eu des soucis sur les structures lorsque je considérais des pointeurs de structures qui devenaient eux des pointeurs de pointeur de structure en assembly ce qui n'est pas. Ainsi j'ai du pour corriger ça ajouter des vérifications pour vérifier les types réels et ajouter un cas spécial en cas de présence de structure qui fonctionne différent dans la pile et les registres
+  \item Ce second problème étant résolu, au cours de mes différents tests j'ai remarqué que lorsqu'une structure était censé posséder comme field une seconde structure, alors elle était physiquement en mémoire à un autre endroit et la première structure ne gardait qu'un pointeur vers la seconde. Or comme on est dans le tas (et pour que l'implémentation du print des structures fonctionne) il fallait que la structure soit bien physiquement dans la première structure. Ainsi j'ai dû rajouter des nouvelles vérifications afin de savoir si on est dans le cas décrit ici afin de bien loger les structures dans la structure si c'était le cas.
+\end{itemize}
+
+\section{Conclusion}
+
+Ainsi, nous avons au cours de ce projet réalisé un compilateur de \verb|NanoGo| en \verb|OCaml|. À travers ce projet nous avons pu voir et comprendre les points essentiels de la compilation avec les différentes étapes, le langage assembly \verb|x86_64| qui est celui le plus proche du langage machine.
+
+\end{document}

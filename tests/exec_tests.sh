@@ -1,6 +1,6 @@
 #!/bin/sh
 
-GO_SRC=$(find go/*.go)
+GO_SRC=$(find tests/*.go)
 
 
 for SRC in $GO_SRC; do
@@ -11,15 +11,15 @@ for SRC in $GO_SRC; do
   echo "-- Correct output ---"
   echo "---------------------"
   # cat "correct_output/$NAME"
-  go run "go/$NAME.go"
+  go run "tests/$NAME.go"
   echo ""
 
   echo "---------------------"
   echo "---- Ngoc output ----"
   echo "---------------------"
-  ../ngoc "go/$NAME.go" && gcc -no-pie "go/$NAME.s" -o "go/$NAME.out" && ./go/$NAME.out
+  ./ngoc "tests/$NAME.go" && gcc -no-pie "tests/$NAME.s" -o "tests/$NAME.out" && ./tests/$NAME.out
   echo ""
   read -n 1 -s
 done
 
-rm go/*.s go/*.out
+rm tests/*.s tests/*.out
